@@ -8,23 +8,23 @@ binding = "ASSETS"
 
 [[kv_namespaces]]
 binding = "USERS_KV"
-id = "97e5a17ecf744f96b492337f7dfa27aa"
+id = "REPLACE_USERS_KV_ID"
 
 [[kv_namespaces]]
 binding = "SESSIONS_KV"
-id = "81a2811cb3df42059c81e3fb82ec1b32"
+id = "REPLACE_SESSIONS_KV_ID"
 
 [[kv_namespaces]]
 binding = "DOCS_KV"
-id = "ae43f100757f4f25ba093a9efa247a39"
+id = "REPLACE_DOCS_KV_ID"
 
 [[kv_namespaces]]
 binding = "SHARES_KV"
-id = "f532dea7acc444c9a62f1e7023a2a687"
+id = "REPLACE_SHARES_KV_ID"
 
 [[r2_buckets]]
 binding = "DOCS_BUCKET"
-bucket_name = "markdown-box-077f5b1a"
+bucket_name = "REPLACE_DOCS_BUCKET"
 
 [vars]
 SESSION_TTL_SECONDS = "259200"

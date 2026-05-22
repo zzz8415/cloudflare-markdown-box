@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 const root = process.cwd();
 const wranglerPath = join(root, "wrangler.toml");
 const bootstrapWranglerPath = join(root, "wrangler.bootstrap.toml");
+const npxBin = process.platform === "win32" ? "npx.cmd" : "npx";
 
 const randomSuffix = () => randomBytes(4).toString("hex");
 const PLACEHOLDERS = [
@@ -28,7 +29,26 @@ const run = (cmd) => {
     }
 };
 
-const wrangler = (args) => run(`npx wrangler --config ${bootstrapWranglerPath} ${args}`);
+const wrangler = (args) => run(`${npxBin} wrangler --config "${bootstrapWranglerPath}" ${args}`);
+
+const putSecret = (name, value) =>
+    new Promise((resolve, reject) => {
+        const wranglerProc = spawn(npxBin, ["wrangler", "--config", bootstrapWranglerPath, "secret", "put", name], {
+            stdio: ["pipe", "inherit", "inherit"]
+        });
+
+        wranglerProc.on("error", (error) => reject(error));
+        wranglerProc.on("close", (code) => {
+            if (code === 0) {
+                resolve();
+                return;
+            }
+            reject(new Error(`wrangler exit code: ${code}`));
+        });
+
+        wranglerProc.stdin.write(value);
+        wranglerProc.stdin.end();
+    });
 
 const ensureWranglerLogin = () => {
     try {
@@ -115,27 +135,11 @@ const main = async () => {
 
     if (process.env.PASSWORD_PEPPER) {
         const pepper = process.env.PASSWORD_PEPPER;
-        const wranglerProc = spawn("npx", ["wrangler", "--config", bootstrapWranglerPath, "secret", "put", "PASSWORD_PEPPER"], {
-            stdio: ["pipe", "inherit", "inherit"],
-            shell: true
-        });
-        wranglerProc.stdin.write(pepper);
-        wranglerProc.stdin.end();
-        await new Promise((resolve, reject) => {
-            wranglerProc.on("close", (code) => code === 0 ? resolve() : reject(new Error(`wrangler exit code: ${code}`)));
-        });
+        await putSecret("PASSWORD_PEPPER", pepper);
         console.log("已使用环境变量 PASSWORD_PEPPER 覆盖现有密钥。\n");
     } else if (!hasSecret("PASSWORD_PEPPER")) {
         const pepper = randomBytes(24).toString("base64url");
-        const wranglerProc = spawn("npx", ["wrangler", "--config", bootstrapWranglerPath, "secret", "put", "PASSWORD_PEPPER"], {
-            stdio: ["pipe", "inherit", "inherit"],
-            shell: true
-        });
-        wranglerProc.stdin.write(pepper);
-        wranglerProc.stdin.end();
-        await new Promise((resolve, reject) => {
-            wranglerProc.on("close", (code) => code === 0 ? resolve() : reject(new Error(`wrangler exit code: ${code}`)));
-        });
+        await putSecret("PASSWORD_PEPPER", pepper);
         console.log("已自动生成并写入随机 PASSWORD_PEPPER。\n");
     } else {
         console.log("检测到 PASSWORD_PEPPER 已存在，本次保持不变。\n");

@@ -245,6 +245,106 @@ const getTinyMdeRoot = () => editorHost.querySelector("#tinymde-root");
 
 const getTinyMdeEditorElement = () => editorHost.querySelector("#tinymde-editor");
 
+const isMacPlatform = () => /MAC|IPHONE|IPAD|IPOD/.test(navigator.platform.toUpperCase());
+
+const hasPrimaryModifier = (event) => (isMacPlatform() ? event.metaKey : event.ctrlKey);
+
+const installTinyMdeMacShortcutBridge = () => {
+    if (!isMacPlatform()) return;
+
+    const editorElement = getTinyMdeEditorElement();
+    if (!editorElement || editorElement.dataset.macShortcutBridge === "1") return;
+
+    editorElement.dataset.macShortcutBridge = "1";
+    editorElement.addEventListener("keydown", (event) => {
+        if (event.isComposing) return;
+        if (!event.metaKey || event.ctrlKey || event.altKey) return;
+
+        const key = event.key.toLowerCase();
+
+        // 允许系统原生剪贴板与全选行为，但阻止 TinyMDE 将其误处理为普通输入
+        if (["a", "c", "v", "x"].includes(key)) {
+            event.stopImmediatePropagation();
+            return;
+        }
+
+        if (key === "s" && !editView.classList.contains("hidden")) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            withBusy(saveBtn, saveDoc, "保存中...").catch((err) => setEditMessage(err.message));
+            return;
+        }
+
+        if (key === "n") {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            withBusy(chromeNewDocBtn, createDoc, "创建中...").catch((err) => notify(err.message, "error"));
+            return;
+        }
+
+        // TinyMDE 内部只识别 ctrl，这里把常见 Command 组合桥接为 ctrl 组合
+        if (["z", "y", "b", "i", "k", "l", "0", "1", "2", "3", "4", "5", "6", "backspace"].includes(key)) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+
+            const mappedKey = key === "y" ? "z" : key;
+            const mappedShift = key === "y" ? true : event.shiftKey;
+
+            editorElement.dispatchEvent(new KeyboardEvent("keydown", {
+                key: mappedKey,
+                ctrlKey: true,
+                shiftKey: mappedShift,
+                bubbles: true,
+                cancelable: true
+            }));
+        }
+    }, true);
+};
+
+const installTinyMdeDeleteKeyFix = () => {
+    const editorElement = getTinyMdeEditorElement();
+    if (!editorElement || editorElement.dataset.deleteKeyFix === "1") return;
+
+    editorElement.dataset.deleteKeyFix = "1";
+    editorElement.addEventListener("keydown", (event) => {
+        if (event.isComposing) return;
+        if (event.key !== "Delete") return;
+        if (event.ctrlKey || event.altKey || event.metaKey) return;
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+
+        applyEditorTransform((state) => {
+            const { content, start, end } = state;
+
+            if (start !== end) {
+                return {
+                    content: `${content.slice(0, start)}${content.slice(end)}`,
+                    start,
+                    end: start
+                };
+            }
+
+            if (start >= content.length) {
+                return {
+                    content,
+                    start,
+                    end: start
+                };
+            }
+
+            return {
+                content: `${content.slice(0, start)}${content.slice(start + 1)}`,
+                start,
+                end: start
+            };
+        }).catch((error) => {
+            console.error(error);
+            notify("Delete 操作失败", "error");
+        });
+    }, true);
+};
+
 const getTinyMdeParagraphs = () => Array.from(editorHost.querySelectorAll("#tinymde-editor .tinymde-paragraph"));
 
 const getTinyParagraphText = (paragraph) => paragraph?.innerText || paragraph?.textContent || "";
@@ -849,6 +949,13 @@ const showList = () => {
 const showEdit = () => {
     setView(editView);
     syncEditorHeightWhenVisible(true);
+    // 延迟确保 DOM 已更新，然后聚焦编辑器
+    requestAnimationFrame(() => {
+        const editorElement = getTinyMdeEditorElement() || editorFallback;
+        if (editorElement) {
+            editorElement.focus();
+        }
+    });
 };
 const showShare = () => setView(shareView);
 
@@ -943,6 +1050,8 @@ const ensureEditor = async () => {
                     showToolbar: false,
                     showWordCount: false
                 });
+                installTinyMdeMacShortcutBridge();
+                installTinyMdeDeleteKeyFix();
                 editor.addEventListener("on-change", () => scheduleRichEditorHeightSync(false));
                 scheduleRichEditorHeightSync(true);
                 return editor;
@@ -1370,8 +1479,8 @@ window.addEventListener("keydown", (event) => {
         return;
     }
 
-    const isMac = navigator.platform.toUpperCase().includes("MAC");
-    const mainKey = isMac ? event.metaKey : event.ctrlKey;
+    const mainKey = hasPrimaryModifier(event);
+
     if (!mainKey) return;
 
     if (event.key.toLowerCase() === "n") {
@@ -1384,9 +1493,6 @@ window.addEventListener("keydown", (event) => {
         withBusy(saveBtn, saveDoc, "保存中...").catch((err) => setEditMessage(err.message));
     }
 
-    if (event.key === "Escape" && !editView.classList.contains("hidden")) {
-        leaveEditView(false);
-    }
 });
 
 window.addEventListener("popstate", () => routeSafe());

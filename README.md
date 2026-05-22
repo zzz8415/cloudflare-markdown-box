@@ -8,6 +8,7 @@
 - Markdown 文档列表、创建、删除、独立编辑页编辑
 - 独立分享页查看，分享链接可主动更换并立即使旧链接失效
 - 自定义 Markdown 工具栏，覆盖常用标题、列表、引用、链接、代码块、表格等操作
+- 编辑页支持常用快捷键（Windows/Linux 的 `Ctrl` 与 macOS 的 `Command`）
 - 所有运行时服务与静态资源均部署在 Cloudflare 上
 - 提供初始化部署和 Cloudflare 资源重置脚本，便于从零验证
 
@@ -70,6 +71,15 @@ npm run dev
 4. 保存后主列表自动刷新。
 5. 通过“分享”生成或更换公开链接；更换后旧链接立即失效。
 6. 访客只要持有链接即可进入独立查看页。
+
+## Keyboard Shortcuts
+
+- 新建文档：`Ctrl/Cmd + N`
+- 保存文档：`Ctrl/Cmd + S`
+- 撤销：`Ctrl/Cmd + Z`
+- 重做：`Ctrl/Cmd + Shift + Z`（Windows 也可 `Ctrl + Y`）
+- 全选 / 复制 / 粘贴 / 剪切：`Ctrl/Cmd + A/C/V/X`
+- 粗体 / 斜体：`Ctrl/Cmd + B/I`
 
 ## Reset Cloudflare Resources
 
