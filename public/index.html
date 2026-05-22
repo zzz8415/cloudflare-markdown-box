@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Markdown Box</title>
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <link rel="alternate icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="stylesheet" href="/styles.css" />
+</head>
+
+<body>
+    <div class="bg-glow"></div>
+    <main class="shell">
+        <section id="authView" class="card auth-card hidden">
+            <h1>Markdown Box</h1>
+            <p class="subtitle">默认账号：admin / admin@123</p>
+            <div class="form-row">
+                <label for="loginUser">账号</label>
+                <input id="loginUser" type="text" value="admin" autocomplete="username" />
+            </div>
+            <div class="form-row">
+                <label for="loginPassword">密码</label>
+                <input id="loginPassword" type="password" value="admin@123" autocomplete="current-password" />
+            </div>
+            <div class="auth-actions">
+                <button id="loginBtn">进入系统</button>
+            </div>
+            <p id="authMsg" class="msg"></p>
+        </section>
+
+        <header id="appChrome" class="app-chrome hidden">
+            <div class="brand-block">
+                <div class="brand-mark"><img class="brand-logo" src="/logo.svg" alt="logo" /></div>
+                <div>
+                    <p class="eyebrow">Cloudflare Markdown Box</p>
+                    <h1 id="appTitle">文档工作台</h1>
+                </div>
+            </div>
+            <div class="account-zone">
+                <p id="userLabel" class="account-name">当前用户：admin</p>
+                <div class="topbar-actions">
+                    <button id="changePwdBtn" class="ghost">修改账户</button>
+                    <button id="logoutBtn" class="ghost">退出</button>
+                </div>
+            </div>
+        </header>
+
+        <section id="errorView" class="card error-view hidden">
+            <p id="errorEyebrow" class="eyebrow">运行异常</p>
+            <h2 id="errorTitle">页面暂时不可用</h2>
+            <p id="errorDescription" class="subtitle">请求处理时发生错误。</p>
+            <div id="errorActions" class="topbar-actions">
+                <button id="errorRetryBtn">重试</button>
+                <button id="errorBackBtn" class="ghost">返回列表</button>
+            </div>
+        </section>
+
+        <section id="listView" class="card app-panel hidden">
+            <header class="topbar">
+                <h2>文档列表</h2>
+                <div class="topbar-actions">
+                    <button id="chromeNewDocBtn">新建文档</button>
+                    <button id="chromeRefreshBtn" class="ghost">刷新</button>
+                </div>
+            </header>
+            <div id="docList" class="doc-list"></div>
+        </section>
+
+        <section id="editView" class="editor-page hidden">
+            <div class="editor-page-panel card">
+                <header class="detail-head">
+                    <div>
+                        <h2 id="editHeaderTitle">编辑文档</h2>
+                        <p id="editMeta" class="subtitle">独立编辑页，仅保留保存和取消。</p>
+                    </div>
+                    <div class="topbar-actions">
+                        <button id="saveBtn">保存</button>
+                        <button id="cancelEditBtn" class="ghost">取消</button>
+                    </div>
+                </header>
+                <div class="form-row doc-title-row">
+                    <label for="docTitle">标题</label>
+                    <input id="docTitle" type="text" placeholder="文档标题" />
+                </div>
+                <div id="editorToolbar" class="editor-toolbar" role="toolbar" aria-label="Markdown 工具栏">
+                    <div class="editor-toolbar-group">
+                        <button type="button" class="editor-toolbar-btn" data-command="bold" title="粗体">B</button>
+                        <button type="button" class="editor-toolbar-btn is-italic" data-command="italic"
+                            title="斜体">I</button>
+                        <button type="button" class="editor-toolbar-btn" data-command="strike" title="删除线">S</button>
+                        <button type="button" class="editor-toolbar-btn is-code" data-command="code"
+                            title="行内代码">&lt;/&gt;</button>
+                        <button type="button" class="editor-toolbar-btn" data-command="link" title="链接">链接</button>
+                    </div>
+                    <div class="editor-toolbar-group">
+                        <button type="button" class="editor-toolbar-btn" data-command="heading" data-value="1"
+                            title="一级标题">H1</button>
+                        <button type="button" class="editor-toolbar-btn" data-command="heading" data-value="2"
+                            title="二级标题">H2</button>
+                        <button type="button" class="editor-toolbar-btn" data-command="heading" data-value="3"
+                            title="三级标题">H3</button>
+                        <button type="button" class="editor-toolbar-btn" data-command="heading" data-value="4"
+                            title="四级标题">H4</button>
+                        <button type="button" class="editor-toolbar-btn" data-command="heading" data-value="5"
+                            title="五级标题">H5</button>
+                        <button type="button" class="editor-toolbar-btn" data-command="heading" data-value="6"
+                            title="六级标题">H6</button>
+                        <button type="button" class="editor-toolbar-btn" data-command="quote" title="引用">引用</button>
+                        <button type="button" class="editor-toolbar-btn" data-command="bullet" title="无序列表">列表</button>
+                        <button type="button" class="editor-toolbar-btn" data-command="ordered" title="有序列表">序列</button>
+                    </div>
+                    <div class="editor-toolbar-group">
+                        <button type="button" class="editor-toolbar-btn is-code" data-command="codeblock"
+                            title="代码块">代码块</button>
+                        <button type="button" class="editor-toolbar-btn" data-command="table" title="表格">表格</button>
+                        <button type="button" class="editor-toolbar-btn" data-command="divider" title="分割线">分割线</button>
+                    </div>
+                </div>
+                <div id="editor"></div>
+                <p id="editMsg" class="msg"></p>
+            </div>
+        </section>
+
+        <section id="shareDialog" class="dialog-mask hidden">
+            <div class="dialog-panel share-dialog-panel">
+                <h3>分享链接</h3>
+                <p class="subtitle">持有这个链接才可以查看当前 Markdown 文档。</p>
+                <div class="form-row">
+                    <label for="shareLinkInput">分享地址</label>
+                    <input id="shareLinkInput" class="share-link-input" type="text" readonly />
+                </div>
+                <div class="topbar-actions dialog-actions">
+                    <button id="shareRefreshBtn" class="ghost">更换链接</button>
+                    <button id="shareCopyBtn">复制链接</button>
+                    <a id="shareOpenBtn" class="button-link ghost" href="#" target="_blank"
+                        rel="noopener noreferrer">直接打开</a>
+                    <button id="shareCloseBtn" class="ghost">关闭</button>
+                </div>
+            </div>
+        </section>
+
+        <section id="shareView" class="card public-panel hidden">
+            <h1 id="publicTitle">共享文档</h1>
+            <p id="publicDate" class="subtitle"></p>
+            <article id="publicContent" class="markdown-body"></article>
+        </section>
+    </main>
+
+    <section id="dialogMask" class="dialog-mask hidden">
+        <div class="dialog-panel">
+            <h3 id="dialogTitle">提示</h3>
+            <p id="dialogMessage" class="subtitle"></p>
+            <div id="dialogInputWrap" class="form-row hidden">
+                <label for="dialogInput">输入</label>
+                <input id="dialogInput" type="text" />
+            </div>
+            <div id="dialogFormWrap" class="hidden"></div>
+            <div class="topbar-actions dialog-actions">
+                <button id="dialogCancelBtn" class="ghost">取消</button>
+                <button id="dialogConfirmBtn">确认</button>
+            </div>
+        </div>
+    </section>
+
+    <script src="/vendor/marked.min.js"></script>
+    <script src="/vendor/purify.min.js"></script>
+    <script type="module" src="/main.js"></script>
+</body>
+
+</html>

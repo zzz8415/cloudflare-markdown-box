@@ -1,0 +1,3 @@
+name = "cloudflare-markdown-box"
+main = "src/worker.ts"
+compatibility_date = "2026-05-20"

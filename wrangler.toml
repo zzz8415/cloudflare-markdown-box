@@ -1,0 +1,30 @@
+name = "markdownbox"
+main = "src/worker.ts"
+compatibility_date = "2026-05-20"
+
+[assets]
+directory = "public"
+binding = "ASSETS"
+
+[[kv_namespaces]]
+binding = "USERS_KV"
+id = "REPLACE_USERS_KV_ID"
+
+[[kv_namespaces]]
+binding = "SESSIONS_KV"
+id = "REPLACE_SESSIONS_KV_ID"
+
+[[kv_namespaces]]
+binding = "DOCS_KV"
+id = "REPLACE_DOCS_KV_ID"
+
+[[kv_namespaces]]
+binding = "SHARES_KV"
+id = "REPLACE_SHARES_KV_ID"
+
+[[r2_buckets]]
+binding = "DOCS_BUCKET"
+bucket_name = "REPLACE_DOCS_BUCKET"
+
+[vars]
+SESSION_TTL_SECONDS = "259200"

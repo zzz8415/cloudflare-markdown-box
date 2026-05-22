@@ -1,0 +1,27 @@
+{
+    "name": "cloudflare-markdown-box",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "wrangler dev",
+        "deploy": "wrangler deploy",
+        "deploy:all": "node scripts/deploy-all.mjs",
+        "sync:assets": "node scripts/sync-vendor-assets.mjs",
+        "check": "tsc --noEmit",
+        "setup": "node scripts/setup.mjs",
+        "reset:cloudflare": "node scripts/reset-cloudflare.mjs",
+        "postinstall": "npm run sync:assets"
+    },
+    "devDependencies": {
+        "@cloudflare/workers-types": "^4.20260501.0",
+        "esbuild": "^0.25.5",
+        "typescript": "^5.9.2",
+        "wrangler": "^4.17.0"
+    },
+    "dependencies": {
+        "@betamark/tinymde": "^0.0.26",
+        "dompurify": "^3.4.5",
+        "marked": "^16.4.1"
+    }
+}
