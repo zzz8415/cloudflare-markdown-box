@@ -24,7 +24,7 @@ id = "REPLACE_SHARES_KV_ID"
 
 [[r2_buckets]]
 binding = "DOCS_BUCKET"
-bucket_name = "REPLACE_DOCS_BUCKET"
+bucket_name = "markdownbox"
 
 [vars]
 SESSION_TTL_SECONDS = "259200"
