@@ -383,8 +383,7 @@ button:not(.editor-toolbar-btn):disabled {
     flex: 0 0 auto;
 }
 
-.app-panel,
-.public-panel {
+.app-panel {
     padding: 22px;
     animation: rise 0.45s ease;
 }
@@ -436,6 +435,7 @@ button:not(.editor-toolbar-btn):disabled {
     padding: 14px 16px;
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 250, 244, 0.88));
     text-align: left;
+    cursor: pointer;
     transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
     animation: cardIn 0.35s ease both;
     animation-delay: calc(var(--stagger-index, 0) * 40ms);
@@ -506,19 +506,18 @@ button:not(.editor-toolbar-btn):disabled {
     padding: 0 8px;
 }
 
-.editor-page-panel,
-.public-panel {
+.editor-page-panel {
     padding: 26px;
     background: rgba(255, 255, 255, 0.88);
     width: min(1240px, 96vw);
+    animation: rise 0.45s ease;
 }
 
 .editor-page-panel {
     position: relative;
 }
 
-.editor-page-panel:hover,
-.public-panel:hover {
+.editor-page-panel:hover {
     transform: none;
     box-shadow: var(--shadow-card);
 }
@@ -687,17 +686,19 @@ button.editor-toolbar-btn[data-command="strike"] {
     color: inherit;
 }
 
-.public-panel {
-    margin: 4vh auto 5vh;
-}
-
-.public-panel .markdown-body {
+.editor-page-panel .markdown-body {
     margin-top: 24px;
 }
 
 .markdown-body {
+    min-height: 460px;
+    padding: 22px 24px;
+    border: 1px solid rgba(64, 52, 36, 0.12);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.96);
     line-height: 1.8;
-    font-size: 16px;
+    font-size: 15px;
+    font-family: var(--mono);
     color: var(--ink);
     overflow-wrap: anywhere;
 }
@@ -814,14 +815,12 @@ button.editor-toolbar-btn[data-command="strike"] {
 }
 
 .detail-head h2,
-.app-panel h2,
-.public-panel h1 {
+.app-panel h2 {
     margin: 0;
 }
 
 .detail-head .subtitle,
 .topbar .subtitle,
-.public-panel .subtitle,
 .auth-card .subtitle {
     margin-bottom: 0;
 }

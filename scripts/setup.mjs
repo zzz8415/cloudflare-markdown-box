@@ -1,4 +1,4 @@
-import { execSync, spawn } from "node:child_process";
+import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -9,6 +9,7 @@ const bootstrapWranglerPath = join(root, "wrangler.bootstrap.toml");
 const npxBin = process.platform === "win32" ? "npx.cmd" : "npx";
 
 const randomSuffix = () => randomBytes(4).toString("hex");
+const DEFAULT_BUCKET_NAME = "markdownbox";
 const PLACEHOLDERS = [
     "REPLACE_USERS_KV_ID",
     "REPLACE_SESSIONS_KV_ID",
@@ -31,24 +32,14 @@ const run = (cmd) => {
 
 const wrangler = (args) => run(`${npxBin} wrangler --config "${bootstrapWranglerPath}" ${args}`);
 
-const putSecret = (name, value) =>
-    new Promise((resolve, reject) => {
-        const wranglerProc = spawn(npxBin, ["wrangler", "--config", bootstrapWranglerPath, "secret", "put", name], {
-            stdio: ["pipe", "inherit", "inherit"]
-        });
-
-        wranglerProc.on("error", (error) => reject(error));
-        wranglerProc.on("close", (code) => {
-            if (code === 0) {
-                resolve();
-                return;
-            }
-            reject(new Error(`wrangler exit code: ${code}`));
-        });
-
-        wranglerProc.stdin.write(value);
-        wranglerProc.stdin.end();
+const putSecret = async (name, value) => {
+    // Windows 上 spawn(npx.cmd, ...) 在部分环境会抛 EINVAL，改为 execSync + input。
+    execSync(`${npxBin} wrangler --config "${bootstrapWranglerPath}" secret put ${name}`, {
+        stdio: ["pipe", "inherit", "inherit"],
+        input: value,
+        encoding: "utf8"
     });
+};
 
 const ensureWranglerLogin = () => {
     try {
@@ -73,8 +64,50 @@ const ensureKv = (namespaceName) => {
 };
 
 const ensureR2 = (bucketName) => {
-    wrangler(`r2 bucket create ${bucketName}`);
+    try {
+        wrangler(`r2 bucket create ${bucketName}`);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/already exists, and you own it|bucket you tried to create already exists|code:\s*10004/i.test(message)) {
+            return bucketName;
+        }
+        throw error;
+    }
     return bucketName;
+};
+
+const parseBucketNameFromWrangler = (content) => {
+    const match = content.match(/bucket_name\s*=\s*"([^"]+)"/);
+    return match ? match[1] : DEFAULT_BUCKET_NAME;
+};
+
+const hasR2Bucket = (bucketName) => {
+    try {
+        const output = wrangler("r2 bucket list --json");
+        const normalized = String(output || "");
+        const start = normalized.indexOf("[");
+        const end = normalized.lastIndexOf("]");
+        if (start >= 0 && end > start) {
+            const parsed = JSON.parse(normalized.slice(start, end + 1));
+            if (Array.isArray(parsed)) {
+                return parsed.some((item) => item && item.name === bucketName);
+            }
+        }
+
+        // 兼容某些 wrangler 版本/输出格式不是纯 JSON 的情况。
+        const plainOutput = wrangler("r2 bucket list");
+        const escaped = bucketName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return new RegExp(`name:\\s+${escaped}(?:\\s|$)`, "i").test(plainOutput);
+    } catch {
+        return false;
+    }
+};
+
+const ensureR2BucketExists = (bucketName) => {
+    if (hasR2Bucket(bucketName)) {
+        return bucketName;
+    }
+    return ensureR2(bucketName);
 };
 
 const listSecrets = () => {
@@ -111,18 +144,22 @@ const main = async () => {
     }
 
     const suffix = randomSuffix();
+    const configuredBucketName = parseBucketNameFromWrangler(wranglerToml);
+    const bucketName = !configuredBucketName || configuredBucketName === "REPLACE_DOCS_BUCKET"
+        ? DEFAULT_BUCKET_NAME
+        : configuredBucketName;
+
     const usersKvName = `markdown-box-users-${suffix}`;
     const sessionsKvName = `markdown-box-sessions-${suffix}`;
     const docsKvName = `markdown-box-docs-${suffix}`;
     const sharesKvName = `markdown-box-shares-${suffix}`;
-    const bucketName = `markdown-box-${suffix}`;
 
     if (needsCreateResources) {
         const usersKvId = ensureKv(usersKvName);
         const sessionsKvId = ensureKv(sessionsKvName);
         const docsKvId = ensureKv(docsKvName);
         const sharesKvId = ensureKv(sharesKvName);
-        ensureR2(bucketName);
+        ensureR2BucketExists(bucketName);
 
         updateWranglerToml({
             REPLACE_USERS_KV_ID: usersKvId,
@@ -132,6 +169,9 @@ const main = async () => {
             REPLACE_DOCS_BUCKET: bucketName
         });
     }
+
+    // 无论是否占位符模式，都保证 wrangler.toml 配置的 bucket 存在。
+    ensureR2BucketExists(bucketName);
 
     if (process.env.PASSWORD_PEPPER) {
         const pepper = process.env.PASSWORD_PEPPER;

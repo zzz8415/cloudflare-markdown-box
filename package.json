@@ -11,7 +11,7 @@
         "check": "tsc --noEmit",
         "setup": "node scripts/setup.mjs",
         "reset:cloudflare": "node scripts/reset-cloudflare.mjs",
-        "postinstall": "npm run sync:assets"
+        "postinstall": "node scripts/sync-vendor-assets.mjs"
     },
     "devDependencies": {
         "@cloudflare/workers-types": "^4.20260501.0",
@@ -22,6 +22,6 @@
     "dependencies": {
         "@betamark/tinymde": "^0.0.26",
         "dompurify": "^3.4.5",
-        "marked": "^16.4.1"
+        "markdown-it": "^14.1.0"
     }
 }

@@ -32,6 +32,8 @@ const editorHost = document.getElementById("editor");
 const publicTitle = document.getElementById("publicTitle");
 const publicDate = document.getElementById("publicDate");
 const publicContent = document.getElementById("publicContent");
+const shareViewActions = document.getElementById("shareViewActions");
+const shareViewBackBtn = document.getElementById("shareViewBackBtn");
 const shareLinkInput = document.getElementById("shareLinkInput");
 const shareRefreshBtn = document.getElementById("shareRefreshBtn");
 const shareCopyBtn = document.getElementById("shareCopyBtn");
@@ -67,6 +69,14 @@ let lastEditorSelection = null;
 
 const TINYMDE_SCRIPT_URL = "/vendor/tinymde.js";
 const TINYMDE_MOUNT_SELECTOR = '[data-editor-mount="tinymde"]';
+const markdownIt = typeof window.MarkdownIt === "function"
+    ? window.MarkdownIt({
+        html: false,
+        breaks: true,
+        linkify: true,
+        typographer: false
+    })
+    : null;
 
 const toast = document.createElement("div");
 toast.className = "toast";
@@ -196,12 +206,8 @@ const openPendingWindow = (title, message) => {
 };
 
 const openEditWindow = (id) => {
-    const editUrl = new URL(`/docs/${id}/edit`, window.location.origin).toString();
-    const opened = window.open(editUrl, "_blank");
-    if (!opened) {
-        throw new Error("浏览器阻止了编辑窗口，请允许弹出窗口后重试");
-    }
-    return opened;
+    navigateTo(`/docs/${id}/edit`);
+    return null;
 };
 
 const notifyDocsChanged = () => {
@@ -217,11 +223,67 @@ const formatLocalDateTime = (value) => {
 };
 
 const renderMarkdown = (source) => {
-    const raw = source || "";
-    const html = marked.parse(raw, {
-        breaks: true,
-        gfm: true
-    });
+    const raw = String(source || "").replace(/\r\n?/g, "\n");
+
+    const isTechnicalLine = (line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return false;
+        if (/^(#?[A-Za-z0-9_.-]+\s*[:=]\s*.+)$/.test(trimmed)) return true;
+        if (/^\[[-_a-zA-Z0-9]+\]$/.test(trimmed)) return true;
+        if (/^\^.*\.[*].*/.test(trimmed)) return true;
+        if (/%\([^)]+\)s/.test(trimmed)) return true;
+        if (/[<>]/.test(trimmed) && /[a-zA-Z0-9_-]/.test(trimmed)) return true;
+        if (/\.[*]|\^\.|[|()]/.test(trimmed)) return true;
+        if (/^(sudo|nano|chmod|systemctl|ufw|apt|yum|curl|sed|grep|cat)\b/.test(trimmed)) return true;
+        return false;
+    };
+
+    const lines = raw.split("\n");
+    const transformed = [];
+    let inFence = false;
+    let inAutoFence = false;
+
+    for (const line of lines) {
+        if (/^\s*```/.test(line)) {
+            if (inAutoFence) {
+                transformed.push("```");
+                inAutoFence = false;
+            }
+            inFence = !inFence;
+            transformed.push(line);
+            continue;
+        }
+
+        if (inFence) {
+            transformed.push(line);
+            continue;
+        }
+
+        const technical = isTechnicalLine(line);
+        if (inAutoFence) {
+            if (technical || line.trim() === "") {
+                transformed.push(line);
+                continue;
+            }
+            transformed.push("```");
+            inAutoFence = false;
+        }
+
+        if (!inAutoFence && technical) {
+            transformed.push("```text");
+            transformed.push(line);
+            inAutoFence = true;
+        } else {
+            transformed.push(line);
+        }
+    }
+
+    if (inAutoFence) {
+        transformed.push("```");
+    }
+
+    const finalSource = transformed.join("\n");
+    const html = markdownIt ? markdownIt.render(finalSource) : finalSource;
     return DOMPurify.sanitize(html);
 };
 
@@ -248,102 +310,6 @@ const getTinyMdeEditorElement = () => editorHost.querySelector("#tinymde-editor"
 const isMacPlatform = () => /MAC|IPHONE|IPAD|IPOD/.test(navigator.platform.toUpperCase());
 
 const hasPrimaryModifier = (event) => (isMacPlatform() ? event.metaKey : event.ctrlKey);
-
-const installTinyMdeMacShortcutBridge = () => {
-    if (!isMacPlatform()) return;
-
-    const editorElement = getTinyMdeEditorElement();
-    if (!editorElement || editorElement.dataset.macShortcutBridge === "1") return;
-
-    editorElement.dataset.macShortcutBridge = "1";
-    editorElement.addEventListener("keydown", (event) => {
-        if (event.isComposing) return;
-        if (!event.metaKey || event.ctrlKey || event.altKey) return;
-
-        const key = event.key.toLowerCase();
-
-        // 允许系统原生剪贴板与全选行为，但阻止 TinyMDE 将其误处理为普通输入
-        if (["a", "c", "v", "x"].includes(key)) {
-            event.stopImmediatePropagation();
-            return;
-        }
-
-        if (key === "s" && !editView.classList.contains("hidden")) {
-            event.preventDefault();
-            event.stopImmediatePropagation();
-            withBusy(saveBtn, saveDoc, "保存中...").catch((err) => setEditMessage(err.message));
-            return;
-        }
-
-        if (key === "n") {
-            event.preventDefault();
-            event.stopImmediatePropagation();
-            withBusy(chromeNewDocBtn, createDoc, "创建中...").catch((err) => notify(err.message, "error"));
-            return;
-        }
-
-        // TinyMDE 内部只识别 ctrl，这里把常见 Command 组合桥接为 ctrl 组合
-        if (["z", "y", "b", "i", "k", "l", "0", "1", "2", "3", "4", "5", "6", "backspace"].includes(key)) {
-            event.preventDefault();
-            event.stopImmediatePropagation();
-
-            const mappedKey = key === "y" ? "z" : key;
-            const mappedShift = key === "y" ? true : event.shiftKey;
-
-            editorElement.dispatchEvent(new KeyboardEvent("keydown", {
-                key: mappedKey,
-                ctrlKey: true,
-                shiftKey: mappedShift,
-                bubbles: true,
-                cancelable: true
-            }));
-        }
-    }, true);
-};
-
-const installTinyMdeDeleteKeyFix = () => {
-    const editorElement = getTinyMdeEditorElement();
-    if (!editorElement || editorElement.dataset.deleteKeyFix === "1") return;
-
-    editorElement.dataset.deleteKeyFix = "1";
-    editorElement.addEventListener("keydown", (event) => {
-        if (event.isComposing) return;
-        if (event.key !== "Delete") return;
-        if (event.ctrlKey || event.altKey || event.metaKey) return;
-
-        event.preventDefault();
-        event.stopImmediatePropagation();
-
-        applyEditorTransform((state) => {
-            const { content, start, end } = state;
-
-            if (start !== end) {
-                return {
-                    content: `${content.slice(0, start)}${content.slice(end)}`,
-                    start,
-                    end: start
-                };
-            }
-
-            if (start >= content.length) {
-                return {
-                    content,
-                    start,
-                    end: start
-                };
-            }
-
-            return {
-                content: `${content.slice(0, start)}${content.slice(start + 1)}`,
-                start,
-                end: start
-            };
-        }).catch((error) => {
-            console.error(error);
-            notify("Delete 操作失败", "error");
-        });
-    }, true);
-};
 
 const getTinyMdeParagraphs = () => Array.from(editorHost.querySelectorAll("#tinymde-editor .tinymde-paragraph"));
 
@@ -957,7 +923,10 @@ const showEdit = () => {
         }
     });
 };
-const showShare = () => setView(shareView);
+const showShare = (inApp = false) => {
+    shareViewActions.classList.toggle("hidden", !inApp);
+    setView(shareView);
+};
 
 const renderDocList = () => {
     docListEl.innerHTML = "";
@@ -986,22 +955,36 @@ const renderDocList = () => {
                 <small>更新时间：${formatLocalDateTime(doc.updatedAt)}</small>
       </div>
       <div class="doc-actions">
-        <button type="button" class="ghost doc-action-view">查看</button>
         <button type="button" class="ghost doc-action-edit">编辑</button>
         <button type="button" class="ghost doc-action-share">分享</button>
         <button type="button" class="danger doc-action-delete">删除</button>
       </div>
     `;
 
-        const viewBtn = row.querySelector(".doc-action-view");
         const editBtn = row.querySelector(".doc-action-edit");
         const shareActionBtn = row.querySelector(".doc-action-share");
         const deleteActionBtn = row.querySelector(".doc-action-delete");
 
-        viewBtn.onclick = () => withBusy(viewBtn, () => openSharedDocById(doc.id), "打开中...").catch((err) => notify(err.message, "error"));
-        editBtn.onclick = () => withBusy(editBtn, () => openEditWindow(doc.id), "打开中...").catch((err) => notify(err.message, "error"));
-        shareActionBtn.onclick = () => withBusy(shareActionBtn, () => openShareDialogById(doc.id), "生成中...").catch((err) => notify(err.message, "error"));
-        deleteActionBtn.onclick = () => withBusy(deleteActionBtn, () => deleteDocById(doc.id), "删除中...").catch((err) => notify(err.message, "error"));
+        row.onclick = (e) => {
+            if (e.target.closest("button")) return;
+            withBusy(null, async () => {
+                const result = await openSharedDocById(doc.id, doc.shareToken || "");
+                if (result.shareToken) {
+                    doc.shareToken = result.shareToken;
+                }
+            }).catch((err) => notify(err.message, "error"));
+        };
+        editBtn.onclick = (e) => { e.stopPropagation(); withBusy(editBtn, () => openEditWindow(doc.id), "打开中...").catch((err) => notify(err.message, "error")); };
+        shareActionBtn.onclick = (e) => {
+            e.stopPropagation();
+            withBusy(shareActionBtn, async () => {
+                const data = await openShareDialogById(doc.id);
+                if (data.shareToken) {
+                    doc.shareToken = data.shareToken;
+                }
+            }, "生成中...").catch((err) => notify(err.message, "error"));
+        };
+        deleteActionBtn.onclick = (e) => { e.stopPropagation(); withBusy(deleteActionBtn, () => deleteDocById(doc.id), "删除中...").catch((err) => notify(err.message, "error")); };
 
         docListEl.appendChild(row);
     });
@@ -1050,8 +1033,6 @@ const ensureEditor = async () => {
                     showToolbar: false,
                     showWordCount: false
                 });
-                installTinyMdeMacShortcutBridge();
-                installTinyMdeDeleteKeyFix();
                 editor.addEventListener("on-change", () => scheduleRichEditorHeightSync(false));
                 scheduleRichEditorHeightSync(true);
                 return editor;
@@ -1120,7 +1101,7 @@ const openShare = async (token) => {
         publicTitle.textContent = data.title || "共享文档";
         publicDate.textContent = `更新时间：${formatLocalDateTime(data.updatedAt)}`;
         publicContent.innerHTML = renderMarkdown(data.content || "");
-        showShare();
+        showShare(false);
     } catch (error) {
         const message = error instanceof Error ? error.message : "这个分享链接已经不可用。";
         const expired = /失效|不存在|无效/.test(message);
@@ -1149,16 +1130,25 @@ const refreshShareDialogLink = async () => {
     return data;
 };
 
-const openSharedDocById = async (id) => {
+const openSharedDocById = async (id, knownShareToken = "") => {
     const pendingWindow = openPendingWindow("打开中...", "正在打开分享页面...");
 
     try {
-        const data = await requestShareInfo(id);
-        const target = getShareLinkTarget(data.shareUrl);
+        let shareToken = knownShareToken;
+        let shareUrl = "";
 
+        if (shareToken) {
+            shareUrl = new URL(`/share/${shareToken}`, window.location.origin).toString();
+        } else {
+            const data = await requestShareInfo(id);
+            shareToken = data.shareToken || "";
+            shareUrl = data.shareUrl;
+        }
+
+        const target = getShareLinkTarget(shareUrl);
         if (pendingWindow && !pendingWindow.closed) {
             pendingWindow.location.replace(target.href);
-            return data;
+            return { shareToken };
         }
 
         throw new Error("浏览器阻止了新页面，请允许弹出窗口后重试");
@@ -1413,6 +1403,8 @@ shareOpenBtn.onclick = (event) => {
 };
 
 shareCloseBtn.onclick = () => closeShareDialog();
+
+shareViewBackBtn.onclick = () => navigateTo("/docs");
 
 shareLinkInput.onclick = () => shareLinkInput.select();
 

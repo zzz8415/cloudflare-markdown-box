@@ -141,10 +141,19 @@
             </div>
         </section>
 
-        <section id="shareView" class="card public-panel hidden">
-            <h1 id="publicTitle">共享文档</h1>
-            <p id="publicDate" class="subtitle"></p>
-            <article id="publicContent" class="markdown-body"></article>
+        <section id="shareView" class="editor-page hidden">
+            <div class="editor-page-panel card">
+                <header class="detail-head">
+                    <div>
+                        <h2 id="publicTitle">共享文档</h2>
+                        <p id="publicDate" class="subtitle"></p>
+                    </div>
+                    <div id="shareViewActions" class="topbar-actions hidden">
+                        <button id="shareViewBackBtn" class="ghost">返回列表</button>
+                    </div>
+                </header>
+                <article id="publicContent" class="markdown-body"></article>
+            </div>
         </section>
     </main>
 
@@ -164,7 +173,7 @@
         </div>
     </section>
 
-    <script src="/vendor/marked.min.js"></script>
+    <script src="/vendor/markdown-it.min.js"></script>
     <script src="/vendor/purify.min.js"></script>
     <script type="module" src="/main.js"></script>
 </body>

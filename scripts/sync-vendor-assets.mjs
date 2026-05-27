@@ -5,14 +5,15 @@ import { build } from "esbuild";
 const root = process.cwd();
 
 const fromTinyMdeEntry = resolve(root, "node_modules/@betamark/tinymde/build/index.js");
-const fromMarkedJs = resolve(root, "node_modules/marked/lib/marked.umd.js");
 const fromPurifyJs = resolve(root, "node_modules/dompurify/dist/purify.min.js");
+const fromMarkdownItEntry = resolve(root, "node_modules/markdown-it/index.mjs");
 
 const toVendor = resolve(root, "public/vendor");
 const toTinyMdeJs = resolve(toVendor, "tinymde.js");
-const toMarkedJs = resolve(toVendor, "marked.min.js");
 const toPurifyJs = resolve(toVendor, "purify.min.js");
+const toMarkdownItJs = resolve(toVendor, "markdown-it.min.js");
 const staleVendorEntries = [
+    "marked.min.js",
     "easymde.min.css",
     "easymde.min.js",
     "fontawesome",
@@ -22,8 +23,8 @@ const staleVendorEntries = [
 
 if (
     !existsSync(fromTinyMdeEntry) ||
-    !existsSync(fromMarkedJs) ||
-    !existsSync(fromPurifyJs)
+    !existsSync(fromPurifyJs) ||
+    !existsSync(fromMarkdownItEntry)
 ) {
     throw new Error("依赖资源不存在，请先执行 npm install");
 }
@@ -61,8 +62,25 @@ window.TinyMDE = {
     legalComments: "none",
     target: ["es2019"]
 });
-cpSync(fromMarkedJs, toMarkedJs);
 cpSync(fromPurifyJs, toPurifyJs);
+
+await build({
+    absWorkingDir: root,
+    stdin: {
+        contents: `import MarkdownItModule from "markdown-it";
+window.MarkdownIt = MarkdownItModule?.default ?? MarkdownItModule;`,
+        resolveDir: root,
+        sourcefile: "markdown-it-entry.js",
+        loader: "js"
+    },
+    outfile: toMarkdownItJs,
+    bundle: true,
+    format: "iife",
+    platform: "browser",
+    minify: true,
+    legalComments: "none",
+    target: ["es2019"]
+});
 
 for (const entry of staleVendorEntries) {
     rmSync(resolve(toVendor, entry), { recursive: true, force: true });

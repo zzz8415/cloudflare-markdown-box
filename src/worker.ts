@@ -14,6 +14,8 @@ const json = (data: unknown, status = 200) =>
 const badRequest = (message: string) => json({ error: message }, 400);
 const unauthorized = () => json({ error: "未登录或会话已失效" }, 401);
 const notFound = () => json({ error: "资源不存在" }, 404);
+const contentMissing = () =>
+    json({ error: "文档正文不存在，可能是 R2 bucket 已更换或对象被删除。" }, 409);
 
 const parseCookies = (cookieHeader: string | null): Record<string, string> => {
     if (!cookieHeader) return {};
@@ -92,7 +94,7 @@ const ensureDefaultAdmin = async (env: Env) => {
     });
 };
 
-const saveDoc = async (env: Env, meta: DocMeta, content: string): Promise<void> => {
+const saveDocMeta = async (env: Env, meta: DocMeta): Promise<void> => {
     await env.DOCS_KV.put(`doc:${meta.id}`, JSON.stringify(meta));
     await env.DOCS_KV.put(
         `owner:${meta.owner}:${meta.id}`,
@@ -103,6 +105,10 @@ const saveDoc = async (env: Env, meta: DocMeta, content: string): Promise<void> 
             shareToken: meta.shareToken ?? ""
         })
     );
+};
+
+const saveDoc = async (env: Env, meta: DocMeta, content: string): Promise<void> => {
+    await saveDocMeta(env, meta);
     await env.DOCS_BUCKET.put(`doc/${meta.owner}/${meta.id}.md`, content, {
         httpMetadata: {
             contentType: "text/markdown; charset=utf-8"
@@ -308,7 +314,8 @@ const handleDocGet = async (request: Request, env: Env, id: string): Promise<Res
     if (!meta || meta.owner !== username) return notFound();
 
     const object = await env.DOCS_BUCKET.get(`doc/${meta.owner}/${meta.id}.md`);
-    const content = object ? await object.text() : "";
+    if (!object) return contentMissing();
+    const content = await object.text();
     return json({ doc: meta, content });
 };
 
@@ -372,8 +379,7 @@ const handleDocShare = async (request: Request, env: Env, id: string): Promise<R
             await env.SHARES_KV.delete(`share:${previousShareToken}`);
         }
 
-        const object = await env.DOCS_BUCKET.get(`doc/${username}/${id}.md`);
-        await saveDoc(env, meta, object ? await object.text() : "");
+        await saveDocMeta(env, meta);
     }
 
     await env.SHARES_KV.put(`share:${shareToken}`, meta.id);
@@ -392,7 +398,8 @@ const handlePublicDoc = async (env: Env, shareToken: string): Promise<Response> 
     if (!meta || meta.shareToken !== shareToken) return notFound();
 
     const object = await env.DOCS_BUCKET.get(`doc/${meta.owner}/${meta.id}.md`);
-    const content = object ? await object.text() : "";
+    if (!object) return contentMissing();
+    const content = await object.text();
 
     return json({
         id: meta.id,
