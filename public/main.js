@@ -1,13 +1,4 @@
-const VDITOR_CDN = "https://unpkg.com/vditor@3.10.6";
-const VDITOR_HLJS_STYLE = "github";
-const VDITOR_EDITOR_HEIGHT = 560;
-
-const createPreviewOptions = () => ({
-    cdn: VDITOR_CDN,
-    hljs: {
-        style: VDITOR_HLJS_STYLE
-    }
-});
+const TOAST_EDITOR_HEIGHT = "560px";
 
 const authView = document.getElementById("authView");
 const appChrome = document.getElementById("appChrome");
@@ -75,6 +66,7 @@ let pendingRetry = null;
 
 let editorInstance = null;
 let editorValue = "";
+let viewerInstance = null;
 
 const toast = document.createElement("div");
 toast.className = "toast";
@@ -242,22 +234,19 @@ const mountEditor = (value = "") => {
         editorInstance.destroy();
     }
 
-    const Vditor = window.Vditor;
-    if (typeof Vditor !== "function") {
-        throw new Error("Vditor 加载失败，请检查网络连接后重试");
+    const ToastEditor = window.toastui?.Editor;
+    if (typeof ToastEditor !== "function") {
+        throw new Error("Toast UI Editor 加载失败，请检查网络连接后重试");
     }
 
     editorHost.replaceChildren();
-    editorInstance = new Vditor("editor", {
-        mode: "sv",
-        height: VDITOR_EDITOR_HEIGHT,
-        value: editorValue,
-        cdn: VDITOR_CDN,
-        cache: { enable: false },
-        preview: {
-            mode: "both",
-            ...createPreviewOptions()
-        }
+    editorInstance = new ToastEditor({
+        el: editorHost,
+        initialValue: editorValue,
+        initialEditType: "markdown",
+        previewStyle: "vertical",
+        height: TOAST_EDITOR_HEIGHT,
+        usageStatistics: false
     });
 
     return editorInstance;
@@ -274,12 +263,13 @@ const setEditorValue = async (value) => {
 
 const getEditorValue = async () => {
     const instance = await ensureEditor();
-    if (typeof instance.getValue === "function") {
-        editorValue = instance.getValue();
+    if (typeof instance.getMarkdown === "function") {
+        editorValue = instance.getMarkdown();
+    } else if (typeof instance.getHTML === "function") {
+        editorValue = instance.getHTML();
     } else {
         const fallbackInput =
-            editorHost.querySelector(".vditor-sv textarea") ||
-            editorHost.querySelector(".vditor-ir textarea") ||
+            editorHost.querySelector(".toastui-editor-md-container textarea") ||
             editorHost.querySelector("textarea");
         editorValue = fallbackInput ? fallbackInput.value : "";
     }
@@ -288,15 +278,24 @@ const getEditorValue = async () => {
 
 const renderPublicMarkdown = (content) => {
     const value = content || "";
-    const Vditor = window.Vditor;
+    const ToastEditor = window.toastui?.Editor;
 
-    if (typeof Vditor !== "function") {
+    if (typeof ToastEditor !== "function") {
         publicContent.textContent = value;
         return;
     }
 
-    publicContent.innerHTML = "";
-    Vditor.preview(publicContent, value, createPreviewOptions());
+    if (viewerInstance && typeof viewerInstance.destroy === "function") {
+        viewerInstance.destroy();
+    }
+
+    publicContent.replaceChildren();
+    viewerInstance = ToastEditor.factory({
+        el: publicContent,
+        viewer: true,
+        initialValue: value,
+        usageStatistics: false
+    });
 };
 
 const showDialog = ({ title, message, confirmText = "确认", cancelText = "取消", input = null, fields = null }) =>
@@ -444,9 +443,9 @@ const showList = () => {
 const showEdit = () => {
     setView(editView);
     requestAnimationFrame(() => {
-        const input = editorHost.querySelector(".vditor-sv textarea") ||
-            editorHost.querySelector(".vditor-ir textarea") ||
-            editorHost.querySelector(".vditor-wysiwyg");
+        const input = editorHost.querySelector(".toastui-editor-md-container textarea") ||
+            editorHost.querySelector(".toastui-editor-main") ||
+            editorHost.querySelector("textarea");
         if (input) input.focus();
     });
 };

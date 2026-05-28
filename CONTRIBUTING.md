@@ -31,9 +31,12 @@ npm run dev
 ## Before Opening a PR
 
 - 运行 `npm run check`
+- 运行 `npm run deploy:all`
 - 确认部署或重置相关脚本没有被无意破坏
 - 前端改动尽量附上截图或简要行为说明
 - 如果修改了分享、鉴权、编辑器或路由行为，请补充 README 相关描述
+- 编辑器相关改动需验证“列表页编辑按钮在新窗口打开”
+- 分享相关改动需验证“分享页渲染与编辑页保存内容一致”
 
 ## Sensitive Data
 

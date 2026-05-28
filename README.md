@@ -6,8 +6,9 @@
 
 - 单账号密码登录，首次请求自动初始化默认账号 `admin / admin@123`
 - Markdown 文档列表、创建、删除、独立编辑页编辑
+- 从列表点击“编辑”会在新窗口打开独立编辑页（受浏览器弹窗策略影响）
 - 独立分享页查看，分享链接可主动更换并立即使旧链接失效
-- Vditor 官方编辑器
+- Toast UI Editor 官方编辑器
 - 编辑页支持常用快捷键（Windows/Linux 的 `Ctrl` 与 macOS 的 `Command`）
 - 所有运行时服务与静态资源均部署在 Cloudflare 上
 - 提供初始化部署和 Cloudflare 资源重置脚本，便于从零验证
@@ -18,8 +19,8 @@
 - Cloudflare KV：用户、会话、文档元数据、分享索引
 - Cloudflare R2：Markdown 正文存储
 - Frontend：原生 HTML / CSS / JavaScript
-- Editor runtime：[Vditor](https://github.com/Vanessa219/vditor)
-- Markdown rendering：Vditor 官方渲染链路（`Vditor.preview`）
+- Editor runtime：[Toast UI Editor](https://github.com/nhn/tui.editor)
+- Markdown rendering：Toast UI Editor 官方渲染链路（`Editor.factory` viewer）
 
 ## Requirements
 
@@ -66,10 +67,18 @@ npm run dev
 
 1. 登录后进入文档列表页。
 2. 新建文档或打开已有文档的独立编辑页。
-3. 在 Vditor 官方编辑器内编辑 Markdown。
+3. 在 Toast UI Editor 官方编辑器内编辑 Markdown。
 4. 保存后主列表自动刷新。
 5. 通过“分享”生成或更换公开链接；更换后旧链接立即失效。
 6. 访客只要持有链接即可进入独立查看页。
+
+## Release Checklist
+
+- `npm run check` 无错误
+- `npm run deploy:all` 成功
+- 列表页点击“编辑”保持当前页在 `/docs`，并弹出新编辑页
+- 编辑页保存后，列表页文档更新时间刷新
+- 分享链接打开后，内容渲染与编辑内容一致
 
 ## Keyboard Shortcuts
 
