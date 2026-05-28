@@ -13,7 +13,6 @@
 
 ```bash
 npm install
-npm run sync:assets
 npm run check
 ```
 
@@ -28,7 +27,6 @@ npm run dev
 - 保持改动聚焦，不顺手重写无关模块
 - 优先删除死代码、过时参数和重复样式，而不是继续堆兼容层
 - 用户可见行为变化需要同步更新 README
-- 第三方编辑器或静态资源链变动时，记得同步更新 `scripts/sync-vendor-assets.mjs`
 
 ## Before Opening a PR
 

@@ -1,3 +1,14 @@
+const VDITOR_CDN = "https://unpkg.com/vditor@3.10.6";
+const VDITOR_HLJS_STYLE = "github";
+const VDITOR_EDITOR_HEIGHT = 560;
+
+const createPreviewOptions = () => ({
+    cdn: VDITOR_CDN,
+    hljs: {
+        style: VDITOR_HLJS_STYLE
+    }
+});
+
 const authView = document.getElementById("authView");
 const appChrome = document.getElementById("appChrome");
 const errorView = document.getElementById("errorView");
@@ -24,7 +35,6 @@ const docListEl = document.getElementById("docList");
 const editHeaderTitle = document.getElementById("editHeaderTitle");
 const editMeta = document.getElementById("editMeta");
 const docTitle = document.getElementById("docTitle");
-const editorToolbar = document.getElementById("editorToolbar");
 const saveBtn = document.getElementById("saveBtn");
 const cancelEditBtn = document.getElementById("cancelEditBtn");
 const editorHost = document.getElementById("editor");
@@ -58,25 +68,13 @@ const dialogConfirmBtn = document.getElementById("dialogConfirmBtn");
 
 let docs = [];
 let currentDoc = null;
-let editor = null;
-let editorLoading = null;
-let editorFallback = null;
-let pendingRetry = null;
 let currentUsername = "";
 let activeShareUrl = "";
 let activeShareDocId = "";
-let lastEditorSelection = null;
+let pendingRetry = null;
 
-const TINYMDE_SCRIPT_URL = "/vendor/tinymde.js";
-const TINYMDE_MOUNT_SELECTOR = '[data-editor-mount="tinymde"]';
-const markdownIt = typeof window.MarkdownIt === "function"
-    ? window.MarkdownIt({
-        html: false,
-        breaks: true,
-        linkify: true,
-        typographer: false
-    })
-    : null;
+let editorInstance = null;
+let editorValue = "";
 
 const toast = document.createElement("div");
 toast.className = "toast";
@@ -138,7 +136,7 @@ const copyText = async (text) => {
             await navigator.clipboard.writeText(text);
             return true;
         } catch {
-            // fall through to selection copy
+            // fallback below
         }
     }
 
@@ -172,6 +170,15 @@ const closeShareDialog = () => {
     shareDialog.classList.add("hidden");
 };
 
+const getShareLinkTarget = (shareUrl) => {
+    try {
+        const url = new URL(shareUrl, window.location.href);
+        return { href: url.toString() };
+    } catch {
+        return { href: shareUrl };
+    }
+};
+
 const showShareDialog = (shareUrl, docId = "") => {
     const target = getShareLinkTarget(shareUrl);
     activeShareUrl = target.href;
@@ -185,14 +192,11 @@ const showShareDialog = (shareUrl, docId = "") => {
     });
 };
 
-const getShareLinkTarget = (shareUrl) => {
-    try {
-        const url = new URL(shareUrl, window.location.href);
-        return { href: url.toString() };
-    } catch {
-        return { href: shareUrl };
-    }
-};
+const requestShareInfo = async (id, rotate = false) =>
+    api(`/api/docs/${id}/share`, {
+        method: "POST",
+        ...(rotate ? { body: JSON.stringify({ rotate: true }) } : {})
+    });
 
 const openPendingWindow = (title, message) => {
     const pendingWindow = window.open("about:blank", "_blank");
@@ -205,9 +209,18 @@ const openPendingWindow = (title, message) => {
     return pendingWindow;
 };
 
-const openEditWindow = (id) => {
-    navigateTo(`/docs/${id}/edit`);
-    return null;
+const getEditUrl = (id) => new URL(`/docs/${id}/edit`, window.location.origin).toString();
+
+const openEditWindow = async (id) => {
+    const pendingWindow = openPendingWindow("打开中...", "正在打开独立编辑页...");
+    const editUrl = getEditUrl(id);
+
+    if (pendingWindow && !pendingWindow.closed) {
+        pendingWindow.location.replace(editUrl);
+        return;
+    }
+
+    throw new Error("浏览器阻止了编辑窗口，请允许弹出窗口后重试");
 };
 
 const notifyDocsChanged = () => {
@@ -222,553 +235,69 @@ const formatLocalDateTime = (value) => {
     return date.toLocaleString();
 };
 
-const renderMarkdown = (source) => {
-    const raw = String(source || "").replace(/\r\n?/g, "\n");
+const mountEditor = (value = "") => {
+    editorValue = value || "";
 
-    const isTechnicalLine = (line) => {
-        const trimmed = line.trim();
-        if (!trimmed) return false;
-        if (/^(#?[A-Za-z0-9_.-]+\s*[:=]\s*.+)$/.test(trimmed)) return true;
-        if (/^\[[-_a-zA-Z0-9]+\]$/.test(trimmed)) return true;
-        if (/^\^.*\.[*].*/.test(trimmed)) return true;
-        if (/%\([^)]+\)s/.test(trimmed)) return true;
-        if (/[<>]/.test(trimmed) && /[a-zA-Z0-9_-]/.test(trimmed)) return true;
-        if (/\.[*]|\^\.|[|()]/.test(trimmed)) return true;
-        if (/^(sudo|nano|chmod|systemctl|ufw|apt|yum|curl|sed|grep|cat)\b/.test(trimmed)) return true;
-        return false;
-    };
+    if (editorInstance && typeof editorInstance.destroy === "function") {
+        editorInstance.destroy();
+    }
 
-    const lines = raw.split("\n");
-    const transformed = [];
-    let inFence = false;
-    let inAutoFence = false;
+    const Vditor = window.Vditor;
+    if (typeof Vditor !== "function") {
+        throw new Error("Vditor 加载失败，请检查网络连接后重试");
+    }
 
-    for (const line of lines) {
-        if (/^\s*```/.test(line)) {
-            if (inAutoFence) {
-                transformed.push("```");
-                inAutoFence = false;
-            }
-            inFence = !inFence;
-            transformed.push(line);
-            continue;
+    editorHost.replaceChildren();
+    editorInstance = new Vditor("editor", {
+        mode: "sv",
+        height: VDITOR_EDITOR_HEIGHT,
+        value: editorValue,
+        cdn: VDITOR_CDN,
+        cache: { enable: false },
+        preview: {
+            mode: "both",
+            ...createPreviewOptions()
         }
+    });
 
-        if (inFence) {
-            transformed.push(line);
-            continue;
-        }
-
-        const technical = isTechnicalLine(line);
-        if (inAutoFence) {
-            if (technical || line.trim() === "") {
-                transformed.push(line);
-                continue;
-            }
-            transformed.push("```");
-            inAutoFence = false;
-        }
-
-        if (!inAutoFence && technical) {
-            transformed.push("```text");
-            transformed.push(line);
-            inAutoFence = true;
-        } else {
-            transformed.push(line);
-        }
-    }
-
-    if (inAutoFence) {
-        transformed.push("```");
-    }
-
-    const finalSource = transformed.join("\n");
-    const html = markdownIt ? markdownIt.render(finalSource) : finalSource;
-    return DOMPurify.sanitize(html);
+    return editorInstance;
 };
 
-const getEditorMinimumHeight = () => Math.max(520, Math.round(window.innerHeight * 0.62));
-
-const getEditorMinimumContentHeight = () => Math.max(420, getEditorMinimumHeight() - 96);
-
-const autoResizeEditorFallback = (allowShrink = false) => {
-    if (!editorFallback) return;
-    const minHeight = getEditorMinimumHeight();
-    const desiredHeight = Math.max(minHeight, editorFallback.scrollHeight);
-    const currentHeight = parseInt(editorFallback.style.height || "0", 10) || minHeight;
-    editorFallback.style.minHeight = `${minHeight}px`;
-
-    if (allowShrink || desiredHeight > currentHeight) {
-        editorFallback.style.height = `${desiredHeight}px`;
-    }
+const ensureEditor = async () => {
+    if (editorInstance) return editorInstance;
+    return mountEditor(editorValue);
 };
 
-const getTinyMdeRoot = () => editorHost.querySelector("#tinymde-root");
-
-const getTinyMdeEditorElement = () => editorHost.querySelector("#tinymde-editor");
-
-const isMacPlatform = () => /MAC|IPHONE|IPAD|IPOD/.test(navigator.platform.toUpperCase());
-
-const hasPrimaryModifier = (event) => (isMacPlatform() ? event.metaKey : event.ctrlKey);
-
-const getTinyMdeParagraphs = () => Array.from(editorHost.querySelectorAll("#tinymde-editor .tinymde-paragraph"));
-
-const getTinyParagraphText = (paragraph) => paragraph?.innerText || paragraph?.textContent || "";
-
-const getClosestTinyParagraph = (node) => {
-    let current = node;
-
-    while (current) {
-        if (current.nodeType === Node.ELEMENT_NODE && current.classList?.contains("tinymde-paragraph")) {
-            return current;
-        }
-        current = current.parentNode;
-    }
-
-    return null;
+const setEditorValue = async (value) => {
+    mountEditor(value || "");
 };
 
-const getTinyParagraphOffset = (paragraphs, paragraph, offsetInParagraph) => {
-    let total = 0;
-
-    for (const currentParagraph of paragraphs) {
-        if (currentParagraph === paragraph) {
-            return total + offsetInParagraph;
-        }
-
-        total += getTinyParagraphText(currentParagraph).length + 1;
+const getEditorValue = async () => {
+    const instance = await ensureEditor();
+    if (typeof instance.getValue === "function") {
+        editorValue = instance.getValue();
+    } else {
+        const fallbackInput =
+            editorHost.querySelector(".vditor-sv textarea") ||
+            editorHost.querySelector(".vditor-ir textarea") ||
+            editorHost.querySelector("textarea");
+        editorValue = fallbackInput ? fallbackInput.value : "";
     }
-
-    return total;
+    return editorValue;
 };
 
-const getTextOffsetWithinParagraph = (paragraph, container, offset) => {
-    if (!paragraph) return 0;
+const renderPublicMarkdown = (content) => {
+    const value = content || "";
+    const Vditor = window.Vditor;
 
-    const range = document.createRange();
-    range.selectNodeContents(paragraph);
-
-    try {
-        range.setEnd(container, offset);
-    } catch {
-        return getTinyParagraphText(paragraph).length;
-    }
-
-    return range.toString().length;
-};
-
-const getTinyMdeSelection = () => {
-    const content = editor?.getContent() || "";
-    const editorElement = getTinyMdeEditorElement();
-    const paragraphs = getTinyMdeParagraphs();
-
-    if (!editorElement || !paragraphs.length) {
-        return { mode: "tinymde", content, start: content.length, end: content.length };
-    }
-
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0 || !editorElement.contains(selection.anchorNode)) {
-        return { mode: "tinymde", content, start: content.length, end: content.length };
-    }
-
-    const range = selection.getRangeAt(0);
-    const startParagraph = getClosestTinyParagraph(range.startContainer) || paragraphs[0];
-    const endParagraph = getClosestTinyParagraph(range.endContainer) || startParagraph;
-    const startOffset = getTextOffsetWithinParagraph(startParagraph, range.startContainer, range.startOffset);
-    const endOffset = getTextOffsetWithinParagraph(endParagraph, range.endContainer, range.endOffset);
-    const start = getTinyParagraphOffset(paragraphs, startParagraph, startOffset);
-    const end = getTinyParagraphOffset(paragraphs, endParagraph, endOffset);
-
-    return {
-        mode: "tinymde",
-        content,
-        start: Math.min(start, end),
-        end: Math.max(start, end)
-    };
-};
-
-const getTextareaSelection = () => {
-    const content = editorFallback?.value || "";
-    const start = editorFallback?.selectionStart ?? content.length;
-    const end = editorFallback?.selectionEnd ?? start;
-
-    return {
-        mode: "textarea",
-        content,
-        start,
-        end
-    };
-};
-
-const cacheEditorSelection = () => {
-    if (editor) {
-        lastEditorSelection = getTinyMdeSelection();
+    if (typeof Vditor !== "function") {
+        publicContent.textContent = value;
         return;
     }
 
-    if (editorFallback) {
-        lastEditorSelection = getTextareaSelection();
-    }
+    publicContent.innerHTML = "";
+    Vditor.preview(publicContent, value, createPreviewOptions());
 };
-
-const getEditorSelectionState = () => {
-    if (editor) {
-        const state = getTinyMdeSelection();
-        const selection = window.getSelection();
-        const editorElement = getTinyMdeEditorElement();
-
-        if (editorElement && selection && editorElement.contains(selection.anchorNode)) {
-            lastEditorSelection = state;
-            return state;
-        }
-
-        if (lastEditorSelection?.mode === "tinymde" && lastEditorSelection.content === state.content) {
-            return lastEditorSelection;
-        }
-
-        return state;
-    }
-
-    if (editorFallback) {
-        const state = getTextareaSelection();
-        lastEditorSelection = state;
-        return state;
-    }
-
-    return {
-        mode: "plain",
-        content: getEditorValue(),
-        start: 0,
-        end: 0
-    };
-};
-
-const resolveTinySourceIndex = (sourceIndex) => {
-    const paragraphs = getTinyMdeParagraphs();
-    if (!paragraphs.length) return null;
-
-    let remaining = Math.max(0, sourceIndex);
-
-    for (let index = 0; index < paragraphs.length; index += 1) {
-        const paragraph = paragraphs[index];
-        const text = getTinyParagraphText(paragraph);
-
-        if (remaining <= text.length || index === paragraphs.length - 1) {
-            return {
-                paragraph,
-                offset: Math.min(remaining, text.length)
-            };
-        }
-
-        remaining -= text.length + 1;
-    }
-
-    const lastParagraph = paragraphs[paragraphs.length - 1];
-    return {
-        paragraph: lastParagraph,
-        offset: getTinyParagraphText(lastParagraph).length
-    };
-};
-
-const resolveTinyTextPoint = (paragraph, charOffset) => {
-    const safeOffset = Math.max(0, charOffset);
-    const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT);
-    let remaining = safeOffset;
-    let textNode = walker.nextNode();
-
-    if (!textNode) {
-        return { node: paragraph, offset: 0 };
-    }
-
-    while (textNode) {
-        const length = textNode.textContent?.length || 0;
-
-        if (remaining <= length) {
-            return { node: textNode, offset: remaining };
-        }
-
-        remaining -= length;
-        textNode = walker.nextNode();
-    }
-
-    return { node: paragraph, offset: paragraph.childNodes.length };
-};
-
-const restoreTinyMdeSelection = (start, end = start) => {
-    requestAnimationFrame(() => {
-        const editorElement = getTinyMdeEditorElement();
-        if (!editorElement) return;
-
-        const startTarget = resolveTinySourceIndex(start);
-        const endTarget = resolveTinySourceIndex(end);
-        if (!startTarget || !endTarget) return;
-
-        const startPoint = resolveTinyTextPoint(startTarget.paragraph, startTarget.offset);
-        const endPoint = resolveTinyTextPoint(endTarget.paragraph, endTarget.offset);
-        const range = document.createRange();
-
-        try {
-            range.setStart(startPoint.node, startPoint.offset);
-            range.setEnd(endPoint.node, endPoint.offset);
-        } catch {
-            return;
-        }
-
-        const selection = window.getSelection();
-        if (!selection) return;
-
-        selection.removeAllRanges();
-        selection.addRange(range);
-        editorElement.focus();
-        lastEditorSelection = {
-            mode: "tinymde",
-            content: editor.getContent(),
-            start,
-            end
-        };
-    });
-};
-
-const applyEditorContent = async (content, start, end = start) => {
-    if (editor) {
-        editor.setContent(content);
-        scheduleRichEditorHeightSync(true);
-        restoreTinyMdeSelection(start, end);
-        return;
-    }
-
-    if (editorFallback) {
-        editorFallback.value = content;
-        editorFallback.focus();
-        editorFallback.setSelectionRange(start, end);
-        autoResizeEditorFallback(true);
-        lastEditorSelection = {
-            mode: "textarea",
-            content,
-            start,
-            end
-        };
-    }
-};
-
-const applyEditorTransform = async (transform) => {
-    const state = getEditorSelectionState();
-    const result = transform(state);
-
-    if (!result || typeof result.content !== "string") {
-        return;
-    }
-
-    await applyEditorContent(result.content, result.start ?? state.start, result.end ?? result.start ?? state.end);
-};
-
-const wrapSelection = (prefix, suffix, placeholder) =>
-    applyEditorTransform((state) => {
-        const selectedText = state.content.slice(state.start, state.end);
-        const body = selectedText || placeholder;
-        const replacement = `${prefix}${body}${suffix}`;
-
-        return {
-            content: `${state.content.slice(0, state.start)}${replacement}${state.content.slice(state.end)}`,
-            start: state.start + prefix.length,
-            end: state.start + prefix.length + body.length
-        };
-    });
-
-const replaceSelectedLines = (lineFormatter) =>
-    applyEditorTransform((state) => {
-        const start = state.start;
-        const end = state.end;
-        const blockStart = state.content.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
-        let blockEnd = state.content.indexOf("\n", end);
-
-        if (blockEnd === -1) {
-            blockEnd = state.content.length;
-        }
-
-        const originalBlock = state.content.slice(blockStart, blockEnd);
-        const lines = originalBlock.split("\n");
-        const formattedLines = lines.map((line, index) => lineFormatter(line, index));
-        const replacement = formattedLines.join("\n");
-
-        return {
-            content: `${state.content.slice(0, blockStart)}${replacement}${state.content.slice(blockEnd)}`,
-            start: blockStart,
-            end: blockStart + replacement.length
-        };
-    });
-
-const stripBlockPrefix = (line) => line.replace(/^(#{1,6}\s+|>\s+|-\s+|\d+\.\s+)/, "");
-
-const insertBlockSnippet = (snippet, selectText = "") =>
-    applyEditorTransform((state) => {
-        const before = state.content.slice(0, state.start);
-        const after = state.content.slice(state.end);
-        const prefix = before && !before.endsWith("\n") ? "\n" : "";
-        const suffix = after && !after.startsWith("\n") ? "\n" : "";
-        const replacement = `${prefix}${snippet}${suffix}`;
-        const selectionStart = state.start + prefix.length + replacement.indexOf(selectText || snippet.trim());
-        const selectionEnd = selectText
-            ? selectionStart + selectText.length
-            : selectionStart;
-
-        return {
-            content: `${before}${replacement}${after}`,
-            start: Math.max(state.start + prefix.length, selectionStart),
-            end: Math.max(state.start + prefix.length, selectionEnd)
-        };
-    });
-
-const handleEditorToolbarCommand = async (command, rawValue = "") => {
-    await ensureEditor();
-
-    switch (command) {
-        case "bold":
-            await wrapSelection("**", "**", "粗体文本");
-            break;
-        case "italic":
-            await wrapSelection("*", "*", "斜体文本");
-            break;
-        case "strike":
-            await wrapSelection("~~", "~~", "删除线");
-            break;
-        case "code":
-            await wrapSelection("`", "`", "code");
-            break;
-        case "link":
-            await applyEditorTransform((state) => {
-                const selectedText = state.content.slice(state.start, state.end);
-                const label = selectedText || "链接文本";
-                const url = "https://example.com";
-                const replacement = `[${label}](${url})`;
-                const labelStart = state.start + 1;
-                const urlStart = state.start + label.length + 3;
-
-                return {
-                    content: `${state.content.slice(0, state.start)}${replacement}${state.content.slice(state.end)}`,
-                    start: selectedText ? urlStart : labelStart,
-                    end: selectedText ? urlStart + url.length : labelStart + label.length
-                };
-            });
-            break;
-        case "heading": {
-            const level = Math.min(6, Math.max(1, Number(rawValue) || 1));
-            const prefix = `${"#".repeat(level)} `;
-            await replaceSelectedLines((line) => `${prefix}${stripBlockPrefix(line)}`);
-            break;
-        }
-        case "quote":
-            await replaceSelectedLines((line) => `> ${stripBlockPrefix(line)}`);
-            break;
-        case "bullet":
-            await replaceSelectedLines((line) => `- ${stripBlockPrefix(line)}`);
-            break;
-        case "ordered":
-            await replaceSelectedLines((line, index) => `${index + 1}. ${stripBlockPrefix(line)}`);
-            break;
-        case "codeblock": {
-            const state = getEditorSelectionState();
-            const body = state.content.slice(state.start, state.end) || "代码内容";
-            await insertBlockSnippet(`\n\`\`\`\n${body}\n\`\`\`\n`, body);
-            break;
-        }
-        case "table":
-            await insertBlockSnippet("| 列 1 | 列 2 |\n| --- | --- |\n| 内容 1 | 内容 2 |\n", "内容 1");
-            break;
-        case "divider":
-            await insertBlockSnippet("---\n");
-            break;
-        default:
-            break;
-    }
-};
-
-const ensureTinyMdeMount = () => {
-    let mount = editorHost.querySelector(TINYMDE_MOUNT_SELECTOR);
-
-    if (!mount) {
-        mount = document.createElement("div");
-        mount.id = "tinymde-mount";
-        mount.className = "tinymde-mount";
-        mount.dataset.editorMount = "tinymde";
-        editorHost.replaceChildren(mount);
-    }
-
-    return mount;
-};
-
-const measureRichEditorHeight = () => {
-    const root = getTinyMdeRoot();
-    const editorElement = getTinyMdeEditorElement();
-    if (!root || !editorElement) return getEditorMinimumHeight();
-
-    const contentHeight = Math.max(
-        getEditorMinimumContentHeight(),
-        editorElement.scrollHeight || 0,
-        editorElement.offsetHeight || 0
-    );
-
-    return Math.max(getEditorMinimumHeight(), Math.ceil(contentHeight + 2));
-};
-
-const syncRichEditorHeight = (allowShrink = false) => {
-    const root = getTinyMdeRoot();
-    const editorElement = getTinyMdeEditorElement();
-    if (!root || !editorElement) return;
-
-    const desiredHeight = measureRichEditorHeight();
-    const currentHeight = parseInt(root.style.height || "0", 10) || root.offsetHeight || getEditorMinimumHeight();
-
-    if (allowShrink || desiredHeight > currentHeight) {
-        root.style.height = `${desiredHeight}px`;
-        editorElement.style.minHeight = `${Math.max(getEditorMinimumContentHeight(), desiredHeight - 2)}px`;
-    }
-};
-
-const scheduleRichEditorHeightSync = (allowShrink = false) => {
-    requestAnimationFrame(() => syncRichEditorHeight(allowShrink));
-};
-
-const syncEditorHeightWhenVisible = (allowShrink = false) => {
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-            if (editView.classList.contains("hidden")) return;
-
-            if (editor) {
-                syncRichEditorHeight(allowShrink);
-                return;
-            }
-
-            autoResizeEditorFallback(allowShrink);
-        });
-    });
-};
-
-const leaveEditView = (didSave = false) => {
-    setEditMessage("");
-
-    if (didSave) {
-        notifyDocsChanged();
-    }
-
-    if (window.opener && window.opener !== window) {
-        window.close();
-        window.setTimeout(() => {
-            if (!window.closed) {
-                navigateTo("/docs");
-            }
-        }, 80);
-        return;
-    }
-
-    navigateTo("/docs");
-};
-
-const requestShareInfo = async (id, rotate = false) =>
-    api(`/api/docs/${id}/share`, {
-        method: "POST",
-        ...(rotate ? { body: JSON.stringify({ rotate: true }) } : {})
-    });
 
 const showDialog = ({ title, message, confirmText = "确认", cancelText = "取消", input = null, fields = null }) =>
     new Promise((resolve) => {
@@ -914,13 +443,11 @@ const showList = () => {
 };
 const showEdit = () => {
     setView(editView);
-    syncEditorHeightWhenVisible(true);
-    // 延迟确保 DOM 已更新，然后聚焦编辑器
     requestAnimationFrame(() => {
-        const editorElement = getTinyMdeEditorElement() || editorFallback;
-        if (editorElement) {
-            editorElement.focus();
-        }
+        const input = editorHost.querySelector(".vditor-sv textarea") ||
+            editorHost.querySelector(".vditor-ir textarea") ||
+            editorHost.querySelector(".vditor-wysiwyg");
+        if (input) input.focus();
     });
 };
 const showShare = (inApp = false) => {
@@ -952,7 +479,7 @@ const renderDocList = () => {
         row.innerHTML = `
       <div class="doc-main">
         <strong>${doc.title || "未命名文档"}</strong>
-                <small>更新时间：${formatLocalDateTime(doc.updatedAt)}</small>
+        <small>更新时间：${formatLocalDateTime(doc.updatedAt)}</small>
       </div>
       <div class="doc-actions">
         <button type="button" class="ghost doc-action-edit">编辑</button>
@@ -965,8 +492,8 @@ const renderDocList = () => {
         const shareActionBtn = row.querySelector(".doc-action-share");
         const deleteActionBtn = row.querySelector(".doc-action-delete");
 
-        row.onclick = (e) => {
-            if (e.target.closest("button")) return;
+        row.onclick = (event) => {
+            if (event.target.closest("button")) return;
             withBusy(null, async () => {
                 const result = await openSharedDocById(doc.id, doc.shareToken || "");
                 if (result.shareToken) {
@@ -974,9 +501,14 @@ const renderDocList = () => {
                 }
             }).catch((err) => notify(err.message, "error"));
         };
-        editBtn.onclick = (e) => { e.stopPropagation(); withBusy(editBtn, () => openEditWindow(doc.id), "打开中...").catch((err) => notify(err.message, "error")); };
-        shareActionBtn.onclick = (e) => {
-            e.stopPropagation();
+
+        editBtn.onclick = (event) => {
+            event.stopPropagation();
+            withBusy(editBtn, () => openEditWindow(doc.id), "打开中...").catch((err) => notify(err.message, "error"));
+        };
+
+        shareActionBtn.onclick = (event) => {
+            event.stopPropagation();
             withBusy(shareActionBtn, async () => {
                 const data = await openShareDialogById(doc.id);
                 if (data.shareToken) {
@@ -984,7 +516,11 @@ const renderDocList = () => {
                 }
             }, "生成中...").catch((err) => notify(err.message, "error"));
         };
-        deleteActionBtn.onclick = (e) => { e.stopPropagation(); withBusy(deleteActionBtn, () => deleteDocById(doc.id), "删除中...").catch((err) => notify(err.message, "error")); };
+
+        deleteActionBtn.onclick = (event) => {
+            event.stopPropagation();
+            withBusy(deleteActionBtn, () => deleteDocById(doc.id), "删除中...").catch((err) => notify(err.message, "error"));
+        };
 
         docListEl.appendChild(row);
     });
@@ -994,90 +530,6 @@ const loadDocs = async () => {
     const data = await api("/api/docs");
     docs = data.docs || [];
     renderDocList();
-};
-
-const ensureEditor = async () => {
-    if (editor) return editor;
-    if (editorLoading) return editorLoading;
-
-    editorLoading = (async () => {
-        if (!window.TinyMDE || !window.TinyMDE.create) {
-            const scriptUrls = [TINYMDE_SCRIPT_URL];
-
-            let loaded = false;
-            for (const url of scriptUrls) {
-                try {
-                    await new Promise((resolve, reject) => {
-                        const script = document.createElement("script");
-                        script.src = url;
-                        script.onload = resolve;
-                        script.onerror = () => reject(new Error("编辑器加载失败"));
-                        document.head.appendChild(script);
-                    });
-                    loaded = true;
-                    break;
-                } catch {
-                    // try next CDN
-                }
-            }
-
-            if (!loaded && (!window.TinyMDE || !window.TinyMDE.create)) {
-                notify("编辑器加载失败，已切换为基础文本模式", "error");
-            }
-        }
-
-        if (window.TinyMDE && window.TinyMDE.create) {
-            try {
-                ensureTinyMdeMount();
-                editor = window.TinyMDE.create("#tinymde-mount", {
-                    showToolbar: false,
-                    showWordCount: false
-                });
-                editor.addEventListener("on-change", () => scheduleRichEditorHeightSync(false));
-                scheduleRichEditorHeightSync(true);
-                return editor;
-            } catch (error) {
-                console.error(error);
-                notify("TinyMDE 初始化失败，已切换为基础文本模式", "error");
-            }
-        }
-
-        if (!editorFallback) {
-            editorFallback = document.createElement("textarea");
-            editorFallback.className = "editor-fallback";
-            editorFallback.placeholder = "Markdown 内容";
-            editorFallback.addEventListener("input", () => autoResizeEditorFallback(false));
-            editorFallback.addEventListener("select", cacheEditorSelection);
-            editorFallback.addEventListener("click", cacheEditorSelection);
-            editorFallback.addEventListener("keyup", cacheEditorSelection);
-            editorHost.replaceChildren(editorFallback);
-            autoResizeEditorFallback(true);
-        }
-
-        return null;
-    })();
-
-    return editorLoading;
-};
-
-const setEditorValue = async (value) => {
-    const instance = await ensureEditor();
-    if (instance) {
-        instance.setContent(value || "");
-        scheduleRichEditorHeightSync(true);
-        return;
-    }
-
-    if (editorFallback) {
-        editorFallback.value = value || "";
-        autoResizeEditorFallback(true);
-    }
-};
-
-const getEditorValue = () => {
-    if (editor) return editor.getContent();
-    if (editorFallback) return editorFallback.value;
-    return "";
 };
 
 const renderEdit = async (doc, content) => {
@@ -1090,9 +542,9 @@ const renderEdit = async (doc, content) => {
 
 const loadEdit = async (id) => {
     setEditMessage("");
+    showEdit();
     const data = await api(`/api/docs/${id}`);
     await renderEdit(data.doc, data.content);
-    showEdit();
 };
 
 const openShare = async (token) => {
@@ -1100,7 +552,7 @@ const openShare = async (token) => {
         const data = await api(`/api/public/${token}`);
         publicTitle.textContent = data.title || "共享文档";
         publicDate.textContent = `更新时间：${formatLocalDateTime(data.updatedAt)}`;
-        publicContent.innerHTML = renderMarkdown(data.content || "");
+        renderPublicMarkdown(data.content || "");
         showShare(false);
     } catch (error) {
         const message = error instanceof Error ? error.message : "这个分享链接已经不可用。";
@@ -1160,6 +612,26 @@ const openSharedDocById = async (id, knownShareToken = "") => {
     }
 };
 
+const leaveEditView = (didSave = false) => {
+    setEditMessage("");
+
+    if (didSave) {
+        notifyDocsChanged();
+    }
+
+    if (window.opener && window.opener !== window) {
+        window.close();
+        window.setTimeout(() => {
+            if (!window.closed) {
+                navigateTo("/docs");
+            }
+        }, 80);
+        return;
+    }
+
+    navigateTo("/docs");
+};
+
 const deleteDocById = async (id) => {
     const ok = await confirmDialog("确认删除该文档吗？", "删除文档");
     if (!ok) return;
@@ -1198,7 +670,7 @@ const createDoc = async () => {
 
 const saveDoc = async () => {
     if (!currentDoc) return;
-    const markdown = getEditorValue();
+    const markdown = await getEditorValue();
     const data = await api(`/api/docs/${currentDoc.id}`, {
         method: "PUT",
         body: JSON.stringify({
@@ -1341,6 +813,11 @@ const navigateTo = (path) => {
     return routeSafe();
 };
 
+const hasPrimaryModifier = (event) => {
+    const isMac = /MAC|IPHONE|IPAD|IPOD/.test(navigator.platform.toUpperCase());
+    return isMac ? event.metaKey : event.ctrlKey;
+};
+
 loginBtn.onclick = async () => {
     await withBusy(loginBtn, async () => {
         setAuthMessage("");
@@ -1403,9 +880,7 @@ shareOpenBtn.onclick = (event) => {
 };
 
 shareCloseBtn.onclick = () => closeShareDialog();
-
 shareViewBackBtn.onclick = () => navigateTo("/docs");
-
 shareLinkInput.onclick = () => shareLinkInput.select();
 
 shareDialog.onclick = (event) => {
@@ -1437,34 +912,6 @@ window.addEventListener("message", (event) => {
     loadDocs().catch((err) => notify(err.message, "error"));
 });
 
-document.addEventListener("selectionchange", () => {
-    const editorElement = getTinyMdeEditorElement();
-    const selection = window.getSelection();
-
-    if (!editorElement || !selection || !editorElement.contains(selection.anchorNode)) {
-        return;
-    }
-
-    cacheEditorSelection();
-});
-
-if (editorToolbar) {
-    editorToolbar.addEventListener("mousedown", (event) => {
-        const button = event.target.closest(".editor-toolbar-btn");
-        if (button) {
-            event.preventDefault();
-        }
-    });
-
-    editorToolbar.addEventListener("click", (event) => {
-        const button = event.target.closest(".editor-toolbar-btn");
-        if (!button) return;
-
-        handleEditorToolbarCommand(button.dataset.command || "", button.dataset.value || "")
-            .catch((error) => notify(error instanceof Error ? error.message : "工具栏操作失败", "error"));
-    });
-}
-
 window.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !shareDialog.classList.contains("hidden")) {
         closeShareDialog();
@@ -1472,7 +919,6 @@ window.addEventListener("keydown", (event) => {
     }
 
     const mainKey = hasPrimaryModifier(event);
-
     if (!mainKey) return;
 
     if (event.key.toLowerCase() === "n") {
@@ -1484,7 +930,6 @@ window.addEventListener("keydown", (event) => {
         event.preventDefault();
         withBusy(saveBtn, saveDoc, "保存中...").catch((err) => setEditMessage(err.message));
     }
-
 });
 
 window.addEventListener("popstate", () => routeSafe());

@@ -8,13 +8,8 @@ const wranglerPath = join(root, "wrangler.toml");
 const bootstrapWranglerPath = join(root, "wrangler.bootstrap.toml");
 const npxBin = process.platform === "win32" ? "npx.cmd" : "npx";
 
-const randomSuffix = () => randomBytes(4).toString("hex");
 const DEFAULT_BUCKET_NAME = "markdownbox";
 const PLACEHOLDERS = [
-    "REPLACE_USERS_KV_ID",
-    "REPLACE_SESSIONS_KV_ID",
-    "REPLACE_DOCS_KV_ID",
-    "REPLACE_SHARES_KV_ID",
     "REPLACE_DOCS_BUCKET"
 ];
 
@@ -61,6 +56,114 @@ const parseKvNamespaceId = (output) => {
 const ensureKv = (namespaceName) => {
     const output = wrangler(`kv namespace create ${namespaceName}`);
     return parseKvNamespaceId(output);
+};
+
+const parseJsonArrayFromOutput = (output) => {
+    const normalized = String(output || "");
+    const start = normalized.indexOf("[");
+    const end = normalized.lastIndexOf("]");
+    if (start < 0 || end <= start) {
+        return null;
+    }
+
+    try {
+        const parsed = JSON.parse(normalized.slice(start, end + 1));
+        return Array.isArray(parsed) ? parsed : null;
+    } catch {
+        return null;
+    }
+};
+
+const parseKvNamespacesFromOutput = (output) => {
+    const text = String(output || "").trim();
+    if (!text) {
+        return [];
+    }
+
+    try {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed)) {
+            return parsed;
+        }
+        if (parsed && Array.isArray(parsed.namespaces)) {
+            return parsed.namespaces;
+        }
+    } catch {
+        // 某些版本输出会混杂日志，继续尝试提取 JSON 数组。
+    }
+
+    const fromSlice = parseJsonArrayFromOutput(text);
+    return fromSlice || [];
+};
+
+const listKvNamespaces = () => {
+    const candidates = [
+        "kv namespace list",
+        "kv namespace list --format json",
+        "kv namespace list --json"
+    ];
+
+    for (const args of candidates) {
+        try {
+            const output = wrangler(args);
+            const parsed = parseKvNamespacesFromOutput(output);
+            if (parsed) {
+                return parsed;
+            }
+        } catch {
+            // 尝试下一个兼容参数。
+        }
+    }
+
+    return [];
+};
+
+const parseKvBindingsFromWrangler = (content) => {
+    const blocks = content.match(/\[\[kv_namespaces\]\][\s\S]*?(?=\n\s*\[\[|\n\s*\[|$)/g) || [];
+    return blocks
+        .map((block) => {
+            const bindingMatch = block.match(/^\s*binding\s*=\s*"([^"]+)"/m);
+            if (!bindingMatch) {
+                return null;
+            }
+            const idMatch = block.match(/^\s*id\s*=\s*"([^"]*)"/m);
+            return {
+                binding: bindingMatch[1],
+                id: idMatch ? idMatch[1] : ""
+            };
+        })
+        .filter(Boolean);
+};
+
+const isMissingKvId = (id) => !id || /^REPLACE_/i.test(id);
+
+const updateKvNamespaceIdsInWrangler = (idByBinding) => {
+    let content = readFileSync(wranglerPath, "utf8");
+    let changed = false;
+
+    content = content.replace(/\[\[kv_namespaces\]\][\s\S]*?(?=\n\s*\[\[|\n\s*\[|$)/g, (block) => {
+        const bindingMatch = block.match(/^\s*binding\s*=\s*"([^"]+)"/m);
+        if (!bindingMatch) {
+            return block;
+        }
+
+        const binding = bindingMatch[1];
+        const nextId = idByBinding[binding];
+        if (!nextId) {
+            return block;
+        }
+
+        changed = true;
+        if (/^\s*id\s*=\s*"[^"]*"/m.test(block)) {
+            return block.replace(/^\s*id\s*=\s*"[^"]*"/m, `id = "${nextId}"`);
+        }
+
+        return block.replace(/^\s*binding\s*=\s*"[^"]+"/m, (line) => `${line}\nid = "${nextId}"`);
+    });
+
+    if (changed) {
+        writeFileSync(wranglerPath, content, "utf8");
+    }
 };
 
 const ensureR2 = (bucketName) => {
@@ -125,6 +228,34 @@ const listSecrets = () => {
 
 const hasSecret = (name) => listSecrets().some((item) => item && item.name === name);
 
+const ensureKvNamespacesByBinding = (wranglerToml) => {
+    const kvEntries = parseKvBindingsFromWrangler(wranglerToml);
+    const missingEntries = kvEntries.filter((item) => isMissingKvId(item.id));
+    if (missingEntries.length === 0) {
+        console.log("KV Namespace ID 已配置，跳过回填。\n");
+        return;
+    }
+
+    const existing = listKvNamespaces();
+    const idByBinding = {};
+
+    for (const entry of missingEntries) {
+        const matched = existing.find((item) => item && item.title === entry.binding && item.id);
+        if (matched) {
+            idByBinding[entry.binding] = matched.id;
+            console.log(`检测到已存在 KV Namespace（${entry.binding}），已回填 ID。`);
+            continue;
+        }
+
+        const createdId = ensureKv(entry.binding);
+        idByBinding[entry.binding] = createdId;
+        console.log(`未找到 ${entry.binding} 对应 Namespace，已自动创建并写回 ID。`);
+    }
+
+    updateKvNamespaceIdsInWrangler(idByBinding);
+    console.log("");
+};
+
 const updateWranglerToml = (replacements) => {
     let content = readFileSync(wranglerPath, "utf8");
     for (const [key, value] of Object.entries(replacements)) {
@@ -139,33 +270,17 @@ const main = async () => {
     const wranglerToml = readFileSync(wranglerPath, "utf8");
     const needsCreateResources = PLACEHOLDERS.some((placeholder) => wranglerToml.includes(placeholder));
 
-    if (!needsCreateResources) {
-        console.log("wrangler.toml 已存在资源 ID，跳过自动创建。若需重建，请先恢复占位符。\n");
-    }
+    ensureKvNamespacesByBinding(wranglerToml);
 
-    const suffix = randomSuffix();
     const configuredBucketName = parseBucketNameFromWrangler(wranglerToml);
     const bucketName = !configuredBucketName || configuredBucketName === "REPLACE_DOCS_BUCKET"
         ? DEFAULT_BUCKET_NAME
         : configuredBucketName;
 
-    const usersKvName = `markdown-box-users-${suffix}`;
-    const sessionsKvName = `markdown-box-sessions-${suffix}`;
-    const docsKvName = `markdown-box-docs-${suffix}`;
-    const sharesKvName = `markdown-box-shares-${suffix}`;
-
     if (needsCreateResources) {
-        const usersKvId = ensureKv(usersKvName);
-        const sessionsKvId = ensureKv(sessionsKvName);
-        const docsKvId = ensureKv(docsKvName);
-        const sharesKvId = ensureKv(sharesKvName);
         ensureR2BucketExists(bucketName);
 
         updateWranglerToml({
-            REPLACE_USERS_KV_ID: usersKvId,
-            REPLACE_SESSIONS_KV_ID: sessionsKvId,
-            REPLACE_DOCS_KV_ID: docsKvId,
-            REPLACE_SHARES_KV_ID: sharesKvId,
             REPLACE_DOCS_BUCKET: bucketName
         });
     }

@@ -7,6 +7,7 @@
     <title>Markdown Box</title>
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <link rel="alternate icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="stylesheet" href="https://unpkg.com/vditor@3.10.6/dist/index.css" />
     <link rel="stylesheet" href="/styles.css" />
 </head>
 
@@ -84,40 +85,6 @@
                     <label for="docTitle">标题</label>
                     <input id="docTitle" type="text" placeholder="文档标题" />
                 </div>
-                <div id="editorToolbar" class="editor-toolbar" role="toolbar" aria-label="Markdown 工具栏">
-                    <div class="editor-toolbar-group">
-                        <button type="button" class="editor-toolbar-btn" data-command="bold" title="粗体">B</button>
-                        <button type="button" class="editor-toolbar-btn is-italic" data-command="italic"
-                            title="斜体">I</button>
-                        <button type="button" class="editor-toolbar-btn" data-command="strike" title="删除线">S</button>
-                        <button type="button" class="editor-toolbar-btn is-code" data-command="code"
-                            title="行内代码">&lt;/&gt;</button>
-                        <button type="button" class="editor-toolbar-btn" data-command="link" title="链接">链接</button>
-                    </div>
-                    <div class="editor-toolbar-group">
-                        <button type="button" class="editor-toolbar-btn" data-command="heading" data-value="1"
-                            title="一级标题">H1</button>
-                        <button type="button" class="editor-toolbar-btn" data-command="heading" data-value="2"
-                            title="二级标题">H2</button>
-                        <button type="button" class="editor-toolbar-btn" data-command="heading" data-value="3"
-                            title="三级标题">H3</button>
-                        <button type="button" class="editor-toolbar-btn" data-command="heading" data-value="4"
-                            title="四级标题">H4</button>
-                        <button type="button" class="editor-toolbar-btn" data-command="heading" data-value="5"
-                            title="五级标题">H5</button>
-                        <button type="button" class="editor-toolbar-btn" data-command="heading" data-value="6"
-                            title="六级标题">H6</button>
-                        <button type="button" class="editor-toolbar-btn" data-command="quote" title="引用">引用</button>
-                        <button type="button" class="editor-toolbar-btn" data-command="bullet" title="无序列表">列表</button>
-                        <button type="button" class="editor-toolbar-btn" data-command="ordered" title="有序列表">序列</button>
-                    </div>
-                    <div class="editor-toolbar-group">
-                        <button type="button" class="editor-toolbar-btn is-code" data-command="codeblock"
-                            title="代码块">代码块</button>
-                        <button type="button" class="editor-toolbar-btn" data-command="table" title="表格">表格</button>
-                        <button type="button" class="editor-toolbar-btn" data-command="divider" title="分割线">分割线</button>
-                    </div>
-                </div>
                 <div id="editor"></div>
                 <p id="editMsg" class="msg"></p>
             </div>
@@ -152,7 +119,7 @@
                         <button id="shareViewBackBtn" class="ghost">返回列表</button>
                     </div>
                 </header>
-                <article id="publicContent" class="markdown-body"></article>
+                <article id="publicContent" class="vditor-reset markdown-body"></article>
             </div>
         </section>
     </main>
@@ -173,8 +140,7 @@
         </div>
     </section>
 
-    <script src="/vendor/markdown-it.min.js"></script>
-    <script src="/vendor/purify.min.js"></script>
+    <script src="https://unpkg.com/vditor@3.10.6/dist/index.min.js"></script>
     <script type="module" src="/main.js"></script>
 </body>
 
