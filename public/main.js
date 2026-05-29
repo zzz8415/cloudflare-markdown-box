@@ -1,4 +1,5 @@
 const TOAST_EDITOR_HEIGHT = "560px";
+const APP_BASE_TITLE = "Markdown Box";
 
 const authView = document.getElementById("authView");
 const appChrome = document.getElementById("appChrome");
@@ -227,6 +228,18 @@ const formatLocalDateTime = (value) => {
     return date.toLocaleString();
 };
 
+const extractMarkdownTitle = (markdown, fallback = "") => {
+    const text = String(markdown || "");
+    const match = text.match(/^\s*#\s+(.+)$/m);
+    const heading = match ? match[1].trim() : "";
+    return heading || fallback || "未命名文档";
+};
+
+const setDocumentTitle = (title) => {
+    const cleaned = String(title || "").trim();
+    document.title = cleaned ? `${cleaned} - ${APP_BASE_TITLE}` : APP_BASE_TITLE;
+};
+
 const mountEditor = (value = "") => {
     editorValue = value || "";
 
@@ -385,8 +398,7 @@ const showDialog = ({ title, message, confirmText = "确认", cancelText = "取�
 
         dialogMask.onclick = (event) => {
             if (event.target === dialogMask) {
-                cleanup();
-                resolve(null);
+                event.stopPropagation();
             }
         };
     });
@@ -435,9 +447,13 @@ const setEditMessage = (msg) => {
     editMsg.textContent = msg || "";
 };
 
-const showLogin = () => setView(authView);
+const showLogin = () => {
+    setDocumentTitle("登录");
+    setView(authView);
+};
 const showList = () => {
     appTitle.textContent = "文档工作台";
+    setDocumentTitle("文档工作台");
     setView(listView);
 };
 const showEdit = () => {
@@ -536,6 +552,7 @@ const renderEdit = async (doc, content) => {
     editHeaderTitle.textContent = doc.title || "未命名文档";
     editMeta.textContent = `更新时间：${formatLocalDateTime(doc.updatedAt)}`;
     docTitle.value = doc.title || "";
+    setDocumentTitle(extractMarkdownTitle(content, doc.title || "编辑文档"));
     await setEditorValue(content || "");
 };
 
@@ -549,7 +566,9 @@ const loadEdit = async (id) => {
 const openShare = async (token) => {
     try {
         const data = await api(`/api/public/${token}`);
-        publicTitle.textContent = data.title || "共享文档";
+        const heading = extractMarkdownTitle(data.content || "", data.title || "共享文档");
+        publicTitle.textContent = heading;
+        setDocumentTitle(heading);
         publicDate.textContent = `更新时间：${formatLocalDateTime(data.updatedAt)}`;
         renderPublicMarkdown(data.content || "");
         showShare(false);
@@ -678,6 +697,7 @@ const saveDoc = async () => {
         })
     });
     currentDoc = data.doc;
+    setDocumentTitle(extractMarkdownTitle(markdown, data.doc?.title || "编辑文档"));
     setEditMessage("已保存");
     if (!window.opener) {
         notify("已保存", "success");
@@ -884,7 +904,7 @@ shareLinkInput.onclick = () => shareLinkInput.select();
 
 shareDialog.onclick = (event) => {
     if (event.target === shareDialog) {
-        closeShareDialog();
+        event.stopPropagation();
     }
 };
 

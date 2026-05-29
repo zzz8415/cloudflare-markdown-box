@@ -7,6 +7,8 @@ export interface Env {
     ASSETS: Fetcher;
     SESSION_TTL_SECONDS: string;
     PASSWORD_PEPPER?: string;
+    ADMIN_BOOTSTRAP_PASSWORD?: string;
+    PASSWORD_HASH_ITERATIONS?: string;
 }
 
 export interface UserRecord {
@@ -14,6 +16,8 @@ export interface UserRecord {
     salt: string;
     hash: string;
     createdAt: string;
+    hashAlgorithm?: "sha256" | "pbkdf2";
+    hashIterations?: number;
 }
 
 export interface DocMeta {

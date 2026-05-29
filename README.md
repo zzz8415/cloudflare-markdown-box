@@ -4,7 +4,7 @@
 
 ## Features
 
-- 单账号密码登录，首次请求自动初始化默认账号 `admin / admin@123`
+- 单账号密码登录，首次账号为 `admin`，首次密码由 `setup` 自动生成或由环境变量注入
 - Markdown 文档列表、创建、删除、独立编辑页编辑
 - 从列表点击“编辑”会在新窗口打开独立编辑页（受浏览器弹窗策略影响）
 - 独立分享页查看，分享链接可主动更换并立即使旧链接失效
@@ -37,13 +37,15 @@ npm run setup
 npm run deploy
 ```
 
+`npm run setup` 会在缺失时自动创建 `ADMIN_BOOTSTRAP_PASSWORD` secret，并在终端输出首次登录密码。
+
 如果希望一条命令完成安装、初始化与发布：
 
 ```bash
 npm run deploy:all
 ```
 
-部署完成后，Wrangler 会输出 `workers.dev` 地址。首次访问时会自动初始化默认账号。
+部署完成后，Wrangler 会输出 `workers.dev` 地址。首次访问时会自动初始化首个账号。
 
 ## Development
 
@@ -124,5 +126,8 @@ npm run reset:cloudflare
 ## Security
 
 - `PASSWORD_PEPPER` 由 `setup` 自动生成，也可以通过环境变量覆盖
+- `ADMIN_BOOTSTRAP_PASSWORD` 由 `setup` 自动生成，也可以通过环境变量覆盖
+- 用户密码使用 PBKDF2-SHA256（含 salt + pepper）存储，旧 SHA-256 记录会在登录成功后自动升级
+- Markdown 正文在 R2 中以 AES-GCM 密文存储，读取时在 Worker 内解密
 - 分享链接支持手动更换，旧链接会立即失效
 - 不要在示例文档、截图、测试内容或提交记录中保留真实账号、密码、令牌或内部地址

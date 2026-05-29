@@ -1,7 +1,9 @@
 import type { DocMeta, Env, UserRecord } from "./types";
 
 const DEFAULT_ADMIN_USERNAME = "admin";
-const DEFAULT_ADMIN_PASSWORD = "admin@123";
+const DEFAULT_HASH_ITERATIONS = 120000;
+const DOC_ENCRYPTION_PREFIX = "enc:v1:";
+const DOC_IV_BYTES = 12;
 
 const json = (data: unknown, status = 200) =>
     new Response(JSON.stringify(data), {
@@ -33,6 +35,9 @@ const getSessionToken = (request: Request): string | null => {
 };
 
 const toBase64 = (bytes: Uint8Array): string => btoa(String.fromCharCode(...bytes));
+const fromBase64 = (value: string): Uint8Array => Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
+const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer =>
+    bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 
 const randomToken = (length = 32): string => {
     const bytes = crypto.getRandomValues(new Uint8Array(length));
@@ -45,9 +50,93 @@ const digestSHA256 = async (value: string): Promise<Uint8Array> => {
     return new Uint8Array(hash);
 };
 
-const hashPassword = async (password: string, salt: string, pepper = ""): Promise<string> => {
+const hashPasswordSha256 = async (password: string, salt: string, pepper = ""): Promise<string> => {
     const digest = await digestSHA256(`${salt}:${password}:${pepper}`);
     return toBase64(digest);
+};
+
+const hashPasswordPbkdf2 = async (
+    password: string,
+    salt: string,
+    pepper = "",
+    iterations = DEFAULT_HASH_ITERATIONS
+): Promise<string> => {
+    const keyMaterial = await crypto.subtle.importKey(
+        "raw",
+        new TextEncoder().encode(`${password}:${pepper}`),
+        { name: "PBKDF2" },
+        false,
+        ["deriveBits"]
+    );
+    const bits = await crypto.subtle.deriveBits(
+        {
+            name: "PBKDF2",
+            hash: "SHA-256",
+            iterations,
+            salt: new TextEncoder().encode(salt)
+        },
+        keyMaterial,
+        256
+    );
+    return toBase64(new Uint8Array(bits));
+};
+
+const getHashIterations = (env: Env): number => {
+    const value = Number(env.PASSWORD_HASH_ITERATIONS || DEFAULT_HASH_ITERATIONS);
+    if (!Number.isFinite(value)) return DEFAULT_HASH_ITERATIONS;
+    const rounded = Math.round(value);
+    return Math.min(300000, Math.max(60000, rounded));
+};
+
+const verifyPassword = async (
+    user: UserRecord,
+    password: string,
+    pepper: string,
+    iterations: number
+): Promise<{ ok: boolean; shouldUpgrade: boolean }> => {
+    if (user.hashAlgorithm === "pbkdf2") {
+        const pbkdf2Hash = await hashPasswordPbkdf2(password, user.salt, pepper, user.hashIterations || iterations);
+        return { ok: pbkdf2Hash === user.hash, shouldUpgrade: false };
+    }
+
+    const legacyHash = await hashPasswordSha256(password, user.salt, pepper);
+    return { ok: legacyHash === user.hash, shouldUpgrade: legacyHash === user.hash };
+};
+
+let cachedDocKey: CryptoKey | null = null;
+
+const getDocEncryptionKey = async (env: Env): Promise<CryptoKey> => {
+    if (cachedDocKey) return cachedDocKey;
+    const secret = env.PASSWORD_PEPPER || "";
+    if (!secret) {
+        throw new Error("缺少 PASSWORD_PEPPER，无法加密文档内容");
+    }
+    const digest = await digestSHA256(`doc:${secret}`);
+    cachedDocKey = await crypto.subtle.importKey("raw", toArrayBuffer(digest), "AES-GCM", false, ["encrypt", "decrypt"]);
+    return cachedDocKey;
+};
+
+const encryptDocContent = async (env: Env, content: string): Promise<string> => {
+    const key = await getDocEncryptionKey(env);
+    const iv = crypto.getRandomValues(new Uint8Array(DOC_IV_BYTES));
+    const data = new TextEncoder().encode(content);
+    const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data);
+    return `${DOC_ENCRYPTION_PREFIX}${toBase64(iv)}:${toBase64(new Uint8Array(encrypted))}`;
+};
+
+const decryptDocContent = async (env: Env, payload: string): Promise<string> => {
+    const body = payload.slice(DOC_ENCRYPTION_PREFIX.length);
+    const [ivB64, cipherB64] = body.split(":");
+    if (!ivB64 || !cipherB64) {
+        throw new Error("文档密文格式不合法");
+    }
+    const key = await getDocEncryptionKey(env);
+    const plain = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: toArrayBuffer(fromBase64(ivB64)) },
+        key,
+        toArrayBuffer(fromBase64(cipherB64))
+    );
+    return new TextDecoder().decode(plain);
 };
 
 const validateUsername = (username: string): boolean => /^[a-zA-Z0-9_-]{3,32}$/.test(username);
@@ -84,13 +173,21 @@ const ensureDefaultAdmin = async (env: Env) => {
     const existingUsers = await env.USERS_KV.list({ prefix: "user:", limit: 1 });
     if (existingUsers.keys.length > 0) return;
 
+    const bootstrapPassword = (env.ADMIN_BOOTSTRAP_PASSWORD || "").trim();
+    if (!bootstrapPassword) {
+        throw new Error("缺少 ADMIN_BOOTSTRAP_PASSWORD，无法初始化首个账号");
+    }
+
     const salt = randomToken(16);
-    const hash = await hashPassword(DEFAULT_ADMIN_PASSWORD, salt, env.PASSWORD_PEPPER || "");
+    const iterations = getHashIterations(env);
+    const hash = await hashPasswordPbkdf2(bootstrapPassword, salt, env.PASSWORD_PEPPER || "", iterations);
     await saveUser(env, {
         username: DEFAULT_ADMIN_USERNAME,
         salt,
         hash,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        hashAlgorithm: "pbkdf2",
+        hashIterations: iterations
     });
 };
 
@@ -109,11 +206,22 @@ const saveDocMeta = async (env: Env, meta: DocMeta): Promise<void> => {
 
 const saveDoc = async (env: Env, meta: DocMeta, content: string): Promise<void> => {
     await saveDocMeta(env, meta);
-    await env.DOCS_BUCKET.put(`doc/${meta.owner}/${meta.id}.md`, content, {
+    const encryptedContent = await encryptDocContent(env, content);
+    await env.DOCS_BUCKET.put(`doc/${meta.owner}/${meta.id}.md`, encryptedContent, {
         httpMetadata: {
             contentType: "text/markdown; charset=utf-8"
         }
     });
+};
+
+const readDocContent = async (env: Env, owner: string, id: string): Promise<string | null> => {
+    const object = await env.DOCS_BUCKET.get(`doc/${owner}/${id}.md`);
+    if (!object) return null;
+    const raw = await object.text();
+    if (!raw.startsWith(DOC_ENCRYPTION_PREFIX)) {
+        return raw;
+    }
+    return decryptDocContent(env, raw);
 };
 
 const getDocById = async (env: Env, id: string): Promise<DocMeta | null> => {
@@ -143,8 +251,16 @@ const handleLogin = async (request: Request, env: Env): Promise<Response> => {
         return json({ error: "用户数据损坏" }, 500);
     }
 
-    const hash = await hashPassword(password, user.salt, env.PASSWORD_PEPPER || "");
-    if (hash !== user.hash) return json({ error: "用户名或密码错误" }, 401);
+    const iterations = getHashIterations(env);
+    const verify = await verifyPassword(user, password, env.PASSWORD_PEPPER || "", iterations);
+    if (!verify.ok) return json({ error: "用户名或密码错误" }, 401);
+
+    if (verify.shouldUpgrade) {
+        user.hash = await hashPasswordPbkdf2(password, user.salt, env.PASSWORD_PEPPER || "", iterations);
+        user.hashAlgorithm = "pbkdf2";
+        user.hashIterations = iterations;
+        await saveUser(env, user);
+    }
 
     const token = randomToken(24);
     const ttlSeconds = Number(env.SESSION_TTL_SECONDS || "259200");
@@ -194,8 +310,15 @@ const handleChangePassword = async (request: Request, env: Env): Promise<Respons
     if (!raw) return unauthorized();
 
     const user = JSON.parse(raw) as UserRecord;
-    const oldHash = await hashPassword(body.oldPassword || "", user.salt, env.PASSWORD_PEPPER || "");
-    if (oldHash !== user.hash) return json({ error: "旧密码错误" }, 401);
+    const iterations = getHashIterations(env);
+    const verifyOld = await verifyPassword(user, body.oldPassword || "", env.PASSWORD_PEPPER || "", iterations);
+    if (!verifyOld.ok) return json({ error: "旧密码错误" }, 401);
+
+    if (verifyOld.shouldUpgrade) {
+        user.hash = await hashPasswordPbkdf2(body.oldPassword || "", user.salt, env.PASSWORD_PEPPER || "", iterations);
+        user.hashAlgorithm = "pbkdf2";
+        user.hashIterations = iterations;
+    }
 
     const usernameChanged = newUsername !== username;
     const passwordChanged = !!newPassword;
@@ -207,9 +330,13 @@ const handleChangePassword = async (request: Request, env: Env): Promise<Respons
 
     let nextSalt = user.salt;
     let nextHash = user.hash;
+    let nextHashAlgorithm: UserRecord["hashAlgorithm"] = user.hashAlgorithm || "pbkdf2";
+    let nextHashIterations: UserRecord["hashIterations"] = user.hashIterations || iterations;
     if (passwordChanged) {
         nextSalt = randomToken(16);
-        nextHash = await hashPassword(newPassword, nextSalt, env.PASSWORD_PEPPER || "");
+        nextHash = await hashPasswordPbkdf2(newPassword, nextSalt, env.PASSWORD_PEPPER || "", iterations);
+        nextHashAlgorithm = "pbkdf2";
+        nextHashIterations = iterations;
     }
 
     if (usernameChanged) {
@@ -220,8 +347,7 @@ const handleChangePassword = async (request: Request, env: Env): Promise<Respons
             const meta = await getDocById(env, id);
             if (!meta || meta.owner !== username) continue;
 
-            const object = await env.DOCS_BUCKET.get(`doc/${username}/${id}.md`);
-            const content = object ? await object.text() : "";
+            const content = (await readDocContent(env, username, id)) || "";
 
             const oldOwner = username;
             meta.owner = newUsername;
@@ -236,7 +362,9 @@ const handleChangePassword = async (request: Request, env: Env): Promise<Respons
         ...user,
         username: newUsername,
         salt: nextSalt,
-        hash: nextHash
+        hash: nextHash,
+        hashAlgorithm: nextHashAlgorithm,
+        hashIterations: nextHashIterations
     });
 
     // Enforce single-account mode: keep only the current account record.
@@ -313,9 +441,8 @@ const handleDocGet = async (request: Request, env: Env, id: string): Promise<Res
     const meta = await getDocById(env, id);
     if (!meta || meta.owner !== username) return notFound();
 
-    const object = await env.DOCS_BUCKET.get(`doc/${meta.owner}/${meta.id}.md`);
-    if (!object) return contentMissing();
-    const content = await object.text();
+    const content = await readDocContent(env, meta.owner, meta.id);
+    if (content === null) return contentMissing();
     return json({ doc: meta, content });
 };
 
@@ -397,9 +524,8 @@ const handlePublicDoc = async (env: Env, shareToken: string): Promise<Response> 
     const meta = await getDocById(env, docId);
     if (!meta || meta.shareToken !== shareToken) return notFound();
 
-    const object = await env.DOCS_BUCKET.get(`doc/${meta.owner}/${meta.id}.md`);
-    if (!object) return contentMissing();
-    const content = await object.text();
+    const content = await readDocContent(env, meta.owner, meta.id);
+    if (content === null) return contentMissing();
 
     return json({
         id: meta.id,

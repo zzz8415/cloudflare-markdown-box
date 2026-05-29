@@ -168,6 +168,9 @@ const main = () => {
         safeDelete(`Secret PASSWORD_PEPPER (${workerName})`, ["secret", "delete", "PASSWORD_PEPPER", "--name", workerName], {
             input: "y\n"
         });
+        safeDelete(`Secret ADMIN_BOOTSTRAP_PASSWORD (${workerName})`, ["secret", "delete", "ADMIN_BOOTSTRAP_PASSWORD", "--name", workerName], {
+            input: "y\n"
+        });
         safeDelete(`Worker ${workerName}`, ["delete", workerName, "--force"]);
     }
 
